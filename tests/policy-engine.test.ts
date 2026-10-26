@@ -242,3 +242,324 @@ describe("Four-Outcome Trust Model & Deterministic Policy (Tests 14 - 19)", () =
     expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
   });
 });
+
+describe("False-Positive Elimination & Grounded Policy Hardening (Scenarios 1 - 10)", () => {
+  it("Scenario 1: Normal branded site without credential forms (YouTube clean: Low observed risk)", () => {
+    const url = new URL("https://www.youtube.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Landing page loaded successfully with expected YouTube layout.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube",
+        visible_purpose: "Video sharing platform",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official YouTube domain", "Valid HTTPS encryption", "Expected public navigation"],
+        checks_performed: ["Verified domain against SSL", "Inspected visible links"],
+        unknowns: [],
+        overall_observation: "Standard YouTube homepage without unexpected prompts.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label === "Credential or Payment Input Form Observed")).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label === "Official Brand Domain Verified")).toBe(true);
+  });
+
+  it("Scenario 2: Descriptive sentence mentioning sign-in without observed form does not trigger false credential warning", () => {
+    const url = new URL("https://www.youtube.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText:
+        "Users can click sign in in the header to authenticate with their Google account. No login or password credentials requested on the main homepage feed.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube",
+        visible_purpose: "Video sharing platform",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official YouTube domain", "Valid HTTPS encryption"],
+        checks_performed: ["Header inspection"],
+        unknowns: [],
+        overall_observation: "Standard feed page; sign in link is optional.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.observedFacts.credentialOrPaymentRequest).toBe(false);
+    expect(report.observedFacts.hasPasswordField).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label.includes("Credential or Payment Input Form Observed"))).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 3: Real password field explicitly observed on verified official domain is treated as authentic sign-in form", () => {
+    const url = new URL("https://accounts.google.com/signin");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "Official Google account authentication portal.",
+      structuredResult: {
+        page_title: "Sign in - Google Accounts",
+        observed_final_url: "https://accounts.google.com/signin",
+        claimed_organization: "Google",
+        visible_purpose: "User authentication",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official Google authentication portal", "Valid TLS certificate"],
+        checks_performed: ["Inspected form fields and action endpoint"],
+        unknowns: [],
+        overall_observation: "Authentic Google login portal on verified Google domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.evidenceItems.some((f) => f.label === "Authentic Sign-in Form Observed")).toBe(true);
+    expect(report.warningSigns.includes("Credential or Payment Input Form Observed")).toBe(false);
+    expect(report.warningSigns.includes("Credential Form on Impersonated Domain")).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.consequenceImpact).toBe("High");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 4: Legitimate brand on known official domain matches registry without discrepancy warning", () => {
+    const url = new URL("https://www.paypal.com/us/home");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "PayPal corporate home page.",
+      structuredResult: {
+        page_title: "Digital Wallets, Money Management, and More | PayPal US",
+        observed_final_url: "https://www.paypal.com/us/home",
+        claimed_organization: "PayPal, Inc.",
+        visible_purpose: "Financial service portal",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Verified financial services domain", "HTTPS encryption"],
+        checks_performed: ["Domain ownership validation"],
+        unknowns: [],
+        overall_observation: "Official PayPal website.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.evidenceItems.some((f) => f.label === "Official Brand Domain Verified")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 5: Legitimate IDP on recognized related auth domain is accepted as affiliated redirection", () => {
+    const url = new URL("https://www.youtube.com/signin_redirect");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "YouTube redirects to Google accounts authentication.",
+      structuredResult: {
+        page_title: "Sign in - Google Accounts",
+        observed_final_url: "https://accounts.google.com/ServiceLogin?service=youtube",
+        claimed_organization: "YouTube - A Google company",
+        visible_purpose: "Single sign-on authentication",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Redirects to official Google accounts IDP", "TLS certificate valid"],
+        checks_performed: ["Redirect chain tracking", "IDP endpoint verification"],
+        unknowns: [],
+        overall_observation: "Single sign-on redirection from YouTube to Google accounts.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.observedDestination.destinationChanged).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Affiliated Redirection Observed")).toBe(true);
+    expect(report.warningSigns.includes("Destination Redirect Host Mismatch")).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 6: Unrelated domain falsely claiming known brand triggers discrepancy and impersonation warnings", () => {
+    const url = new URL("https://youtube-verify-security.xyz/login");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Phishing page claiming YouTube brand identity.",
+      structuredResult: {
+        page_title: "YouTube Account Verification",
+        observed_final_url: "https://youtube-verify-security.xyz/login",
+        claimed_organization: "YouTube",
+        visible_purpose: "Credential harvesting",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Unrecognized domain claiming YouTube branding", "requests credentials"],
+        positive_signals: [],
+        checks_performed: ["Domain ownership check", "Credential form detection"],
+        unknowns: [],
+        overall_observation: "Suspected phishing portal masquerading as YouTube on an unapproved domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Credential Form on Impersonated Domain")).toBe(true);
+    expect(report.warningSigns.length).toBeGreaterThanOrEqual(2);
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered may be stolen/i);
+  });
+
+  it("Scenario 7: Negation phrases in warning fields are discarded and not treated as warnings", () => {
+    const url = new URL("https://www.youtube.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Checked for threats. None found.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube",
+        visible_purpose: "Video streaming",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "None observed - no urgency language, no lookalike domain, no fake security alerts",
+          "No suspicious prompts detected",
+          "none",
+        ],
+        positive_signals: ["Standard video catalog", "Valid HTTPS encryption"],
+        checks_performed: ["Heuristic threat detection"],
+        unknowns: [],
+        overall_observation: "No warning signs observed on official domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 8: Inaccessible footer links are routed to missing evidence and limitations, not warning signs", () => {
+    const url = new URL("https://www.youtube.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Infinite scroll prevented complete footer verification.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube",
+        visible_purpose: "Video streaming",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Lack of visible footer links due to infinite scrolling content"],
+        positive_signals: ["Clean branding", "Valid HTTPS encryption"],
+        checks_performed: ["Link audit"],
+        unknowns: ["Could not inspect bottom page footer"],
+        overall_observation: "Footer links could not be observed due to dynamic feed.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.warningSigns.includes("Lack of visible footer links due to infinite scrolling content")).toBe(false);
+    expect(report.missingEvidence.includes("Lack of visible footer links due to infinite scrolling content")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Investigation Limitation" && f.kind === "neutral")).toBe(true);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 9: Genuine confirmed phishing triggers High Risk and Severe impact", () => {
+    const url = new URL("https://secure-login-chase-update.info/auth");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "Confirmed credential harvesting page.",
+      structuredResult: {
+        page_title: "Chase Online - Urgent Verification",
+        observed_final_url: "https://secure-login-chase-update.info/auth",
+        claimed_organization: "Chase",
+        visible_purpose: "Credential harvesting",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "Confirmed phishing portal targeting banking credentials",
+          "Fake sign-in portal with cloned login page",
+        ],
+        positive_signals: [],
+        checks_performed: ["Phishing pattern signature analysis"],
+        unknowns: [],
+        overall_observation: "Confirmed phishing portal masquerading as Chase.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.riskOutcome).toBe("High risk");
+    expect(report.threatLikelihood).toBe("High");
+    expect(report.consequenceImpact).toBe("Severe");
+    expect(report.recommendedAction).toMatch(/DO NOT PROCEED/i);
+  });
+
+  it("Scenario 10: Incomplete investigation mandates Unknown outcome even on known brand domain", () => {
+    const url = new URL("https://www.youtube.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: false,
+      goalFailed: true,
+      errorMessage: "Investigation stream ended unexpectedly without a COMPLETE event",
+      eventsCount: 2,
+      rawAgentText: "",
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toMatch(/could not be completed/i);
+    expect(report.missingEvidence.includes("Complete live page inspection could not be finished.")).toBe(true);
+    expect(report.recommendedAction).toMatch(/Do not proceed until you verify/i);
+  });
+});

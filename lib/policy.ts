@@ -62,6 +62,331 @@ const PROMPT_INJECTION_PATTERNS = [
   /override\s+security\s+verdict/i,
 ];
 
+export interface BrandRegistryEntry {
+  canonicalName: string;
+  aliases: string[];
+  approvedDomains: string[];
+  affiliatedAuthDomains?: string[];
+}
+
+/**
+ * Structured registry of high-profile canonical brands, approved domain roots,
+ * and recognized identity provider / affiliated authentication domains.
+ */
+export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
+  google: {
+    canonicalName: "Google",
+    aliases: ["google", "google llc", "google inc", "alphabet"],
+    approvedDomains: [
+      "google.com",
+      "google.co.uk",
+      "google.ca",
+      "google.de",
+      "google.fr",
+      "google.com.au",
+      "google.co.in",
+      "google.co.jp",
+    ],
+    affiliatedAuthDomains: ["accounts.google.com"],
+  },
+  youtube: {
+    canonicalName: "YouTube",
+    aliases: ["youtube", "youtube llc", "youtube video", "youtube music", "youtube - a google company"],
+    approvedDomains: ["youtube.com", "youtu.be"],
+    affiliatedAuthDomains: ["accounts.google.com", "google.com"],
+  },
+  microsoft: {
+    canonicalName: "Microsoft",
+    aliases: ["microsoft", "microsoft corporation", "msft", "office 365", "microsoft 365"],
+    approvedDomains: [
+      "microsoft.com",
+      "live.com",
+      "office.com",
+      "office365.com",
+      "msn.com",
+      "bing.com",
+      "windows.com",
+    ],
+    affiliatedAuthDomains: [
+      "login.microsoftonline.com",
+      "login.live.com",
+      "account.microsoft.com",
+    ],
+  },
+  apple: {
+    canonicalName: "Apple",
+    aliases: ["apple", "apple inc"],
+    approvedDomains: ["apple.com", "icloud.com"],
+    affiliatedAuthDomains: ["appleid.apple.com"],
+  },
+  amazon: {
+    canonicalName: "Amazon",
+    aliases: ["amazon", "amazon.com", "amazon inc"],
+    approvedDomains: [
+      "amazon.com",
+      "amazon.co.uk",
+      "amazon.de",
+      "amazon.co.jp",
+      "amazon.fr",
+      "amazon.ca",
+      "amazon.in",
+      "aws.amazon.com",
+    ],
+    affiliatedAuthDomains: ["signin.aws.amazon.com"],
+  },
+  paypal: {
+    canonicalName: "PayPal",
+    aliases: ["paypal", "paypal inc"],
+    approvedDomains: ["paypal.com", "paypal.me"],
+    affiliatedAuthDomains: [],
+  },
+  meta: {
+    canonicalName: "Meta",
+    aliases: ["meta", "meta platforms", "facebook", "instagram", "whatsapp"],
+    approvedDomains: ["meta.com", "facebook.com", "instagram.com", "whatsapp.com", "fb.com"],
+    affiliatedAuthDomains: [],
+  },
+  netflix: {
+    canonicalName: "Netflix",
+    aliases: ["netflix", "netflix inc"],
+    approvedDomains: ["netflix.com"],
+    affiliatedAuthDomains: [],
+  },
+  wikimedia: {
+    canonicalName: "Wikimedia Foundation",
+    aliases: ["wikimedia", "wikimedia foundation", "wikipedia"],
+    approvedDomains: ["wikipedia.org", "wikimedia.org", "wiktionary.org", "wikidata.org"],
+    affiliatedAuthDomains: [],
+  },
+  iana: {
+    canonicalName: "Internet Assigned Numbers Authority (IANA)",
+    aliases: ["iana", "internet assigned numbers authority"],
+    approvedDomains: ["iana.org", "example.com", "example.org", "example.net"],
+    affiliatedAuthDomains: [],
+  },
+  github: {
+    canonicalName: "GitHub",
+    aliases: ["github", "github inc"],
+    approvedDomains: ["github.com", "github.io"],
+    affiliatedAuthDomains: [],
+  },
+  chase: {
+    canonicalName: "Chase",
+    aliases: ["chase", "jpmorgan chase", "chase bank"],
+    approvedDomains: ["chase.com"],
+    affiliatedAuthDomains: [],
+  },
+  bankofamerica: {
+    canonicalName: "Bank of America",
+    aliases: ["bank of america", "bofa"],
+    approvedDomains: ["bankofamerica.com"],
+    affiliatedAuthDomains: [],
+  },
+  wellsfargo: {
+    canonicalName: "Wells Fargo",
+    aliases: ["wells fargo", "wells fargo bank"],
+    approvedDomains: ["wellsfargo.com"],
+    affiliatedAuthDomains: [],
+  },
+};
+
+/**
+ * Checks whether a given hostname matches an approved root domain or is a subdomain of it.
+ * Enforces strict domain boundaries: 'www.youtube.com' matches 'youtube.com', but
+ * 'youtube-phish.com' does NOT match 'youtube.com'.
+ */
+export function isDomainOrSubdomain(hostname: string, domainOrRoot: string): boolean {
+  if (!hostname || !domainOrRoot) return false;
+  const normHost = hostname.toLowerCase().trim();
+  const normRoot = domainOrRoot.toLowerCase().trim();
+  if (normHost === normRoot) return true;
+  if (normHost.endsWith("." + normRoot)) return true;
+  return false;
+}
+
+/**
+ * Extracts a concise canonical brand name from claimed organization text.
+ * Strips explanatory suffixes, parentheticals, and corporate entity abbreviations.
+ */
+export function extractCanonicalBrandName(claimedOrg: string): string {
+  if (!claimedOrg) return "";
+  let cleaned = claimedOrg.trim();
+  // Strip parentheticals like "(Google)", "(US)"
+  cleaned = cleaned.replace(/\s*\([^)]*\)/g, "").trim();
+  // Split on dash, hyphen, pipe, bullet, colon if descriptive
+  const parts = cleaned.split(/[-–—|•:]/);
+  if (parts.length > 0 && parts[0].trim().length > 0) {
+    cleaned = parts[0].trim();
+  }
+  // Strip trailing inc, llc, corp, ltd, co
+  cleaned = cleaned.replace(/\s*,?\s*(llc|inc\.?|corp\.?|corporation|ltd\.?|limited|co\.?|company)$/i, "").trim();
+  return cleaned;
+}
+
+export interface BrandAffiliationResult {
+  isRegisteredBrand: boolean;
+  brandEntry?: BrandRegistryEntry;
+  canonicalBrand: string;
+  isOfficialDomain: boolean;
+  isAffiliatedDomain: boolean;
+  hasMismatch: boolean;
+  reason?: string;
+}
+
+/**
+ * Evaluates claimed organization against the destination hostname using the structured registry.
+ */
+export function evaluateBrandAffiliation(
+  claimedOrg: string | undefined,
+  hostname: string
+): BrandAffiliationResult {
+  if (!claimedOrg || !claimedOrg.trim()) {
+    return {
+      isRegisteredBrand: false,
+      canonicalBrand: "",
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+    };
+  }
+
+  const rawOrgLower = claimedOrg.toLowerCase().trim();
+  const canonical = extractCanonicalBrandName(claimedOrg);
+  const canonicalLower = canonical.toLowerCase().trim();
+
+  // Find if claimedOrg matches any known entry in the BRAND_DOMAIN_REGISTRY
+  let matchedEntry: BrandRegistryEntry | undefined;
+  for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+    const entryNameLower = entry.canonicalName.toLowerCase();
+    if (
+      entryNameLower === canonicalLower ||
+      entryNameLower === rawOrgLower ||
+      entry.aliases.some(
+        (alias) =>
+          alias === canonicalLower ||
+          alias === rawOrgLower ||
+          rawOrgLower.startsWith(alias) ||
+          canonicalLower.startsWith(alias)
+      )
+    ) {
+      matchedEntry = entry;
+      break;
+    }
+  }
+
+  if (!matchedEntry) {
+    // Unregistered brand: We DO NOT declare a mismatch warning based on guesses.
+    return {
+      isRegisteredBrand: false,
+      canonicalBrand: canonical || claimedOrg,
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+      reason: `Ownership of claimed organization "${claimedOrg}" is not in the recognized brand registry.`,
+    };
+  }
+
+  // Brand is in registry. Check if hostname matches any approved domain or affiliated domain
+  const isOfficial = matchedEntry.approvedDomains.some((d) => isDomainOrSubdomain(hostname, d));
+  const isAffiliated = (matchedEntry.affiliatedAuthDomains || []).some((d) => isDomainOrSubdomain(hostname, d));
+
+  if (isOfficial || isAffiliated) {
+    return {
+      isRegisteredBrand: true,
+      brandEntry: matchedEntry,
+      canonicalBrand: matchedEntry.canonicalName,
+      isOfficialDomain: isOfficial,
+      isAffiliatedDomain: isAffiliated,
+      hasMismatch: false,
+    };
+  }
+
+  // Brand is recognized, but hostname does NOT match approved or affiliated domains!
+  return {
+    isRegisteredBrand: true,
+    brandEntry: matchedEntry,
+    canonicalBrand: matchedEntry.canonicalName,
+    isOfficialDomain: false,
+    isAffiliatedDomain: false,
+    hasMismatch: true,
+    reason: `The page claims to represent "${matchedEntry.canonicalName}", but the domain (${hostname}) is not an approved official domain (${matchedEntry.approvedDomains.join(", ")}).`,
+  };
+}
+
+/**
+ * Checks if a redirection from fromHost to toHost is an approved affiliated redirection
+ * (e.g. YouTube redirecting to accounts.google.com for login).
+ */
+export function isAffiliatedRedirection(fromHost: string, toHost: string): boolean {
+  const normFrom = fromHost.toLowerCase().trim();
+  const normTo = toHost.toLowerCase().trim();
+  if (normFrom === normTo) return true;
+
+  for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+    const fromApproved = entry.approvedDomains.some((d) => isDomainOrSubdomain(normFrom, d));
+    if (fromApproved) {
+      const toApproved = entry.approvedDomains.some((d) => isDomainOrSubdomain(normTo, d));
+      const toAffiliated = (entry.affiliatedAuthDomains || []).some((d) => isDomainOrSubdomain(normTo, d));
+      if (toApproved || toAffiliated) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Detects whether a string is a negation or non-warning statement
+ * (e.g. "None observed", "No suspicious prompts", "None observed - no urgency language").
+ */
+export function isNegationOrNonWarning(text: string): boolean {
+  if (!text || typeof text !== "string") return true;
+  const t = text.trim().toLowerCase();
+  if (
+    t === "" ||
+    t === "none" ||
+    t === "n/a" ||
+    t === "none observed" ||
+    t === "none detected" ||
+    t === "no warnings" ||
+    t === "no warning signs" ||
+    t === "nil" ||
+    t === "null" ||
+    t === "[]" ||
+    t === "false"
+  ) {
+    return true;
+  }
+  if (
+    /^(none\s+observed|none\s+detected|no\s+suspicious|no\s+warning|no\s+threat|no\s+urgency|no\s+credential|no\s+login|no\s+download|no\s+deceptive|no\s+apparent\s+threat)/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Detects whether an item is a probe limitation / incomplete check
+ * (e.g. "Lack of visible footer links", "Footer links not verified", "Inaccessible footer", "DOM certificate details could not be extracted").
+ * These are limitations of the read-only probe, NOT security threats.
+ */
+export function isIncompleteCheckOrLimitation(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+  return (
+    /footer\s+links?/i.test(t) ||
+    /dom\s+certificate/i.test(t) ||
+    /inaccessible\s+footer/i.test(t) ||
+    /probe\s+limitation/i.test(t) ||
+    /could\s+not\s+be\s+extracted/i.test(t) ||
+    /not\s+verified\s+by\s+probe/i.test(t) ||
+    /dynamic\s+content\s+limitation/i.test(t)
+  );
+}
+
 function stringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((x) => String(x).trim()).filter(Boolean);
@@ -231,24 +556,30 @@ export function assessInvestigation(params: {
     }
   }
 
-  // 3. Observed Facts Extraction
+  // 3. Observed Facts Extraction (Strictly grounded in structured evidence, not raw text regex)
   const hasPunycode = submittedHost.includes("xn--");
   const isNumericIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(submittedHost) || submittedHost.includes(":");
   const isHttp = submittedUrl.protocol === "http:";
 
-  const credRequested = booleanOrStringFlag(structured?.credential_or_payment_request) ||
-    /password|login|sign in|credit card|cvv|account credentials/i.test(rawText);
-  const downloadRequested = booleanOrStringFlag(structured?.download_or_permission_request) ||
-    /download\s+(apk|exe|zip|dmg|file)|grant\s+permission/i.test(rawText);
+  const structuredCred = booleanOrStringFlag(structured?.credential_or_payment_request);
+  const structuredLogin = booleanOrStringFlag(structured?.login_form_observed);
+  const structuredPassword = booleanOrStringFlag(structured?.password_field_observed);
+  const structuredPayment = booleanOrStringFlag(structured?.payment_field_observed);
+  const downloadRequested = booleanOrStringFlag(structured?.download_or_permission_request);
+
+  const credOrPaymentRequested = structuredCred || structuredPassword || structuredPayment;
+  const hasPasswordField = structuredPassword;
+  const hasPaymentField = structuredPayment;
+  const formsObserved = structuredLogin || structuredPassword || structuredPayment || credOrPaymentRequested;
 
   const observedFacts: ObservedFacts = {
     pageTitle: sanitizeText(structured?.page_title),
     visiblePurpose: sanitizeText(structured?.visible_purpose),
-    credentialOrPaymentRequest: credRequested,
+    credentialOrPaymentRequest: credOrPaymentRequested,
     downloadOrPermissionRequest: downloadRequested,
-    formsObserved: credRequested || /<form|input\s+type/i.test(rawText),
-    hasPasswordField: /password|passcode|secret/i.test(rawText),
-    hasPaymentField: /credit card|cvv|cardholder|payment details/i.test(rawText),
+    formsObserved,
+    hasPasswordField,
+    hasPaymentField,
     hasPunycode,
     isNumericIp,
     isHttp,
@@ -294,14 +625,24 @@ export function assessInvestigation(params: {
   }
 
   if (destinationChanged && finalHost) {
-    const item: Finding = {
-      label: "Destination Redirect Host Mismatch",
-      detail: `The final destination (${finalHost}) differs from the submitted link (${submittedHost}). Verify this redirection is expected.`,
-      kind: "warning",
-      provenance: "redirect_analysis",
-    };
-    evidenceItems.push(item);
-    warningSigns.push(item.label);
+    const isAffiliated = isAffiliatedRedirection(submittedHost, finalHost);
+    if (isAffiliated) {
+      evidenceItems.push({
+        label: "Affiliated Redirection Observed",
+        detail: `The destination redirected to an affiliated authentication or corporate domain (${finalHost}).`,
+        kind: "neutral",
+        provenance: "redirect_analysis",
+      });
+    } else {
+      const item: Finding = {
+        label: "Destination Redirect Host Mismatch",
+        detail: `The final destination (${finalHost}) differs from the submitted link (${submittedHost}). Verify this redirection is expected.`,
+        kind: "warning",
+        provenance: "redirect_analysis",
+      };
+      evidenceItems.push(item);
+      warningSigns.push(item.label);
+    }
   }
 
   if (hasUnsafeRedirect && finalHost) {
@@ -315,8 +656,10 @@ export function assessInvestigation(params: {
     warningSigns.push(item.label);
   }
 
-  // Claimed Organization
+  // Claimed Organization & Brand Registry Affiliation Evaluation
   const claimedOrg = sanitizeText(structured?.claimed_organization);
+  const brandAffiliation = evaluateBrandAffiliation(claimedOrg, submittedHost);
+
   if (claimedOrg) {
     evidenceItems.push({
       label: "Claimed Identity",
@@ -325,31 +668,61 @@ export function assessInvestigation(params: {
       provenance: "page_content",
     });
 
-    // Check if claimed org mismatches hostname (e.g. claims Google/Microsoft/Bank but host is random)
-    const orgLower = claimedOrg.toLowerCase();
-    const isMajorBrand = /google|microsoft|apple|paypal|amazon|bank|chase|wellsfargo|university|college/i.test(orgLower);
-    if (isMajorBrand && !submittedHost.includes(orgLower.replace(/\s+/g, ""))) {
+    if (brandAffiliation.hasMismatch) {
       const mismatchItem: Finding = {
         label: "Branding vs Domain Discrepancy",
-        detail: `The page claims to represent "${claimedOrg}", but the domain (${submittedHost}) does not appear affiliated with that organization.`,
+        detail:
+          brandAffiliation.reason ||
+          `The page claims to represent "${claimedOrg}", but the domain (${submittedHost}) does not appear affiliated with that organization.`,
         kind: "warning",
         provenance: "policy_rule",
       };
       evidenceItems.push(mismatchItem);
       warningSigns.push(mismatchItem.label);
+    } else if (brandAffiliation.isOfficialDomain) {
+      evidenceItems.push({
+        label: "Official Brand Domain Verified",
+        detail: `The domain (${submittedHost}) matches the official domain registry for ${brandAffiliation.canonicalBrand}.`,
+        kind: "positive",
+        provenance: "policy_rule",
+      });
+    } else if (!brandAffiliation.isRegisteredBrand) {
+      missingEvidence.push(`Independent third-party verification of domain ownership for claimed brand "${claimedOrg}".`);
     }
   }
 
-  // Credential prompt on unverified site
-  if (observedFacts.credentialOrPaymentRequest) {
-    const item: Finding = {
-      label: "Credential or Payment Input Form Observed",
-      detail: "The page requests login credentials, passwords, or payment information.",
-      kind: "warning",
-      provenance: "browser_observation",
-    };
-    evidenceItems.push(item);
-    warningSigns.push(item.label);
+  // Credential and Form Observations
+  if (credOrPaymentRequested || hasPasswordField || hasPaymentField) {
+    if (brandAffiliation.isOfficialDomain) {
+      // Authentic sign-in form on verified official domain
+      evidenceItems.push({
+        label: "Authentic Sign-in Form Observed",
+        detail: `The page renders an authentic authentication form on ${brandAffiliation.canonicalBrand}'s verified official domain.`,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      // Neutral finding: not added to warningSigns
+    } else if (brandAffiliation.hasMismatch) {
+      // Credential prompt on impersonated domain (phishing)
+      const item: Finding = {
+        label: "Credential Form on Impersonated Domain",
+        detail: `The page requests login credentials for ${brandAffiliation.canonicalBrand}, but the destination domain (${submittedHost}) is not affiliated with this organization.`,
+        kind: "warning",
+        provenance: "policy_rule",
+      };
+      evidenceItems.push(item);
+      warningSigns.push(item.label);
+    } else {
+      // Credential prompt on unverified destination
+      const item: Finding = {
+        label: "Credential or Payment Input Form Observed",
+        detail: "The page requests login credentials, passwords, or payment information on an unverified destination.",
+        kind: "warning",
+        provenance: "browser_observation",
+      };
+      evidenceItems.push(item);
+      warningSigns.push(item.label);
+    }
   }
 
   // File download prompt
@@ -377,14 +750,32 @@ export function assessInvestigation(params: {
     warningSigns.push(injectionItem.label);
   }
 
-  // Agent observed warning signs
+  // Agent observed warning signs with Negation & Probe Limitation Filtering
   const agentWarnings = stringList(structured?.observed_warning_signs);
-  for (const w of agentWarnings) {
-    if (!warningSigns.includes(w)) {
-      warningSigns.push(w);
+  for (const rawW of agentWarnings) {
+    if (isNegationOrNonWarning(rawW)) {
+      // Discard negations such as "None observed - no urgency language..."
+      continue;
+    }
+    if (isIncompleteCheckOrLimitation(rawW)) {
+      // Route probe limitations (e.g. inaccessible footer links) to missingEvidence
+      if (!missingEvidence.includes(rawW)) {
+        missingEvidence.push(rawW);
+      }
+      evidenceItems.push({
+        label: "Investigation Limitation",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
+
+    if (!warningSigns.includes(rawW)) {
+      warningSigns.push(rawW);
       evidenceItems.push({
         label: "Observed Warning Sign",
-        detail: w,
+        detail: rawW,
         kind: "warning",
         provenance: "browser_observation",
       });
@@ -405,7 +796,9 @@ export function assessInvestigation(params: {
   // Missing evidence / unknowns
   const agentUnknowns = stringList(structured?.unknowns);
   for (const u of agentUnknowns) {
-    missingEvidence.push(u);
+    if (!missingEvidence.includes(u)) {
+      missingEvidence.push(u);
+    }
   }
 
   // 5. Interpretations (Separated explicitly from facts)
@@ -442,7 +835,7 @@ export function assessInvestigation(params: {
     consequenceImpact = "Moderate";
   }
 
-  const allWarningText = (warningSigns.join(" ") + " " + rawText).toLowerCase();
+  const allWarningText = warningSigns.join(" ").toLowerCase();
   const confirmedHighSignal = HIGH_RISK_SIGNALS.some((sig) => allWarningText.includes(sig));
   const hasSuspiciousSignal = SUSPICIOUS_SIGNALS.some((sig) => allWarningText.includes(sig));
 
@@ -467,27 +860,31 @@ export function assessInvestigation(params: {
     recommendedAction = "DO NOT PROCEED. Close this tab immediately. Do not submit passwords, payment details, or download files.";
   }
   // Policy Rule 3: Suspicious Signs
-  else if (warningSigns.length > 0 || hasSuspiciousSignal) {
+  else if (warningSigns.length > 0 || hasSuspiciousSignal || hasPromptInjection) {
     riskOutcome = "Suspicious";
     threatLikelihood = "Moderate";
     outcomeReason = `Observed ${warningSigns.length} meaningful warning sign(s) requiring caution: ${warningSigns.slice(0, 3).join("; ")}.`;
     recommendedAction = "Pause and verify. Do not enter credentials or complete financial transactions without independent confirmation.";
   }
-  // Policy Rule 4: Low Observed Risk (Strict conditions: passed checks, positive signals, 0 warnings, 0 critical unknowns)
+  // Policy Rule 4: Low Observed Risk (Strict conditions: passed checks, positive signals, 0 warnings, verified domain/clean redirect)
   else if (
-    agentPositives.length >= 1 &&
+    (agentPositives.length >= 1 || brandAffiliation.isOfficialDomain) &&
     warningSigns.length === 0 &&
     !isHttp &&
     !hasPunycode &&
     !isNumericIp &&
-    !destinationChanged &&
-    !observedFacts.credentialOrPaymentRequest &&
-    !observedFacts.downloadOrPermissionRequest
+    (!destinationChanged || isAffiliatedRedirection(submittedHost, finalHost || submittedHost)) &&
+    !observedFacts.downloadOrPermissionRequest &&
+    (!observedFacts.credentialOrPaymentRequest || brandAffiliation.isOfficialDomain)
   ) {
     riskOutcome = "Low observed risk";
     threatLikelihood = "Low";
-    consequenceImpact = "Low";
-    outcomeReason = "Standard checks passed without observed warning signs. Note: this reflects the checks performed and is not a guarantee of safety.";
+    consequenceImpact =
+      brandAffiliation.isOfficialDomain && (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField)
+        ? "High"
+        : "Low";
+    outcomeReason =
+      "Standard checks passed without observed warning signs. Note: this reflects the checks performed and is not a guarantee of safety.";
     recommendedAction = "Proceed with normal digital hygiene. Always confirm the domain in your address bar before entering sensitive details.";
   }
   // Policy Rule 5: Fallback to Unknown if insufficient positive proof
