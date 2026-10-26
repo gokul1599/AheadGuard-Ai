@@ -72,6 +72,8 @@ export interface BrandRegistryEntry {
 /**
  * Structured registry of high-profile canonical brands, approved domain roots,
  * and recognized identity provider / affiliated authentication domains.
+ * Note: example.com, example.org, and example.net are reserved documentation domains (RFC 2606),
+ * not official brand domains representing IANA or ICANN.
  */
 export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   google: {
@@ -161,7 +163,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   iana: {
     canonicalName: "Internet Assigned Numbers Authority (IANA)",
     aliases: ["iana", "internet assigned numbers authority"],
-    approvedDomains: ["iana.org", "example.com", "example.org", "example.net"],
+    approvedDomains: ["iana.org"],
     affiliatedAuthDomains: [],
   },
   github: {
@@ -189,6 +191,26 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     affiliatedAuthDomains: [],
   },
 };
+
+/**
+ * Checks whether a given hostname is an officially reserved example/documentation domain (RFC 2606 / RFC 6761).
+ */
+export function isReservedExampleDomain(hostname: string): boolean {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase().trim();
+  return (
+    h === "example.com" ||
+    h === "example.org" ||
+    h === "example.net" ||
+    h === "example.edu" ||
+    h.endsWith(".example.com") ||
+    h.endsWith(".example.org") ||
+    h.endsWith(".example.net") ||
+    h.endsWith(".example.edu") ||
+    h === "example" ||
+    h.endsWith(".example")
+  );
+}
 
 /**
  * Checks whether a given hostname matches an approved root domain or is a subdomain of it.
@@ -230,6 +252,7 @@ export interface BrandAffiliationResult {
   isOfficialDomain: boolean;
   isAffiliatedDomain: boolean;
   hasMismatch: boolean;
+  isReservedExample?: boolean;
   reason?: string;
 }
 
@@ -240,6 +263,19 @@ export function evaluateBrandAffiliation(
   claimedOrg: string | undefined,
   hostname: string
 ): BrandAffiliationResult {
+  // 1. Reserved documentation / example domains (RFC 2606) do not claim corporate identities
+  if (isReservedExampleDomain(hostname)) {
+    return {
+      isRegisteredBrand: false,
+      canonicalBrand: "",
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+      isReservedExample: true,
+      reason: "Reserved documentation/example domain (RFC 2606); references to third-party organizations are informational.",
+    };
+  }
+
   if (!claimedOrg || !claimedOrg.trim()) {
     return {
       isRegisteredBrand: false,
@@ -387,6 +423,77 @@ export function isIncompleteCheckOrLimitation(text: string): boolean {
   );
 }
 
+/**
+ * Detects whether an observed text describes an ordinary fundraising or non-profit donation appeal.
+ * Ordinary donation appeals (such as Wikipedia fundraising banners) use persuasive language but are NOT deceptive threats.
+ */
+export function isOrdinaryDonationAppeal(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+
+  const isDonationRelated =
+    /donat(e|ion|ions|ing)|fundrais(ing|er|ers)|charit(y|able)|non-profit\s+appeal|supporter\s+contribution/i.test(t);
+
+  if (!isDonationRelated) return false;
+
+  // Must not involve account compromise, password coercion, or suspension
+  const isMaliciousThreat =
+    /account\s+suspension|locked\s+account|verify\s+password|security\s+compromise|credential|malware|stolen/i.test(t);
+
+  return !isMaliciousThreat;
+}
+
+/**
+ * Detects whether an observed text describes evidence-backed deceptive urgency.
+ * Deceptive urgency includes artificial deadlines, threats of account suspension, or coercive claims designed to elicit sensitive data.
+ */
+export function isDeceptiveUrgency(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+
+  return (
+    /account\s+will\s+be\s+suspended/i.test(t) ||
+    /suspend(ed)?\s+within\s+\d+/i.test(t) ||
+    /immediate(ly)?\s+verify\s+(your\s+)?account/i.test(t) ||
+    /urgent\s+security\s+verification/i.test(t) ||
+    /unauthorized\s+transaction\s+detected/i.test(t) ||
+    /threat\s+of\s+(account\s+deletion|termination|legal\s+action)/i.test(t) ||
+    /artificial\s+countdown\s+timer/i.test(t) ||
+    /coercive\s+(warning|deadline)/i.test(t)
+  );
+}
+
+/**
+ * Detects whether a text describes an ordinary app-store link, mobile app download link,
+ * or informational link rather than an active browser prompt or automatic file execution.
+ */
+export function isAppStoreOrInformationalDownload(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+  return (
+    /app\s*store|google\s*play|play\s*store|f-droid|microsoft\s*store/i.test(t) ||
+    /download\s+(the\s+)?(mobile\s+)?app/i.test(t) ||
+    /links?\s+to\s+(download|app)/i.test(t) ||
+    /available\s+on\s+(ios|android|google\s*play|app\s*store)/i.test(t) ||
+    /optional\s+mobile\s+app/i.test(t)
+  );
+}
+
+/**
+ * Detects whether a finding describes an active, direct browser download prompt or high-privilege permission request.
+ */
+export function isActiveDownloadOrPermissionPrompt(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+  return (
+    /automatic\s+download/i.test(t) ||
+    /prompt(ed|s)?\s+(to\s+)?download\s+(executable|\.exe|\.apk|\.zip|\.dmg|\.bat|\.sh)/i.test(t) ||
+    /direct\s+download\s+prompt/i.test(t) ||
+    /permission\s+(dialog|prompt|request(ed)?)\s+(for\s+)?(camera|microphone|notification|geolocation|location)/i.test(t) ||
+    /browser\s+permission\s+requested/i.test(t)
+  );
+}
+
 function stringList(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((x) => String(x).trim()).filter(Boolean);
@@ -410,55 +517,106 @@ function sanitizeText(value: unknown, maxLength = 500): string {
   return value.trim().slice(0, maxLength);
 }
 
+export interface ActionPreviewOptions {
+  isOfficialDomain?: boolean;
+  hasImpersonation?: boolean;
+  hasPhishingThreat?: boolean;
+  hasCredentialWarning?: boolean;
+  isExplicitLoginDestination?: boolean;
+}
+
 /**
- * Builds an Action Preview describing real-world consequences.
+ * Builds an Action Preview describing real-world consequences accurately,
+ * distinguishing general browsing from explicit credential submission and avoiding false impersonation claims.
  */
 export function generateActionPreview(
   facts: ObservedFacts,
   riskOutcome: RiskOutcome,
   claimedOrg?: string,
-  destinationHost?: string
+  destinationHost?: string,
+  options?: ActionPreviewOptions
 ): ActionPreview {
   const riskFactors: string[] = [];
+  const isOfficial = options?.isOfficialDomain ?? false;
+  const hasImpersonation = options?.hasImpersonation ?? false;
+  const hasPhishingThreat = options?.hasPhishingThreat ?? false;
+  const hasCredentialWarning = options?.hasCredentialWarning ?? false;
+  const isExplicitLogin = options?.isExplicitLoginDestination ?? false;
 
-  if (facts.credentialOrPaymentRequest || facts.hasPasswordField) {
-    riskFactors.push("Destination prompts for account credentials, passwords, or authentication tokens.");
-  }
-  if (facts.hasPaymentField) {
-    riskFactors.push("Destination requests financial, credit card, or payment transaction details.");
-  }
-  if (facts.downloadOrPermissionRequest) {
-    riskFactors.push("Destination attempts to prompt file downloads or elevated browser permissions.");
-  }
+  // 1. Risk Factors Grounding
   if (facts.isHttp) {
     riskFactors.push("Destination uses unencrypted HTTP; data sent in transit can be intercepted.");
   }
   if (facts.hasPunycode) {
     riskFactors.push("Destination hostname uses internationalized lookalike characters (punycode).");
   }
+  if (facts.hasPaymentField) {
+    riskFactors.push("Destination requests financial, credit card, or payment transaction details.");
+  }
+  if (facts.downloadOrPermissionRequest) {
+    riskFactors.push("Destination actively prompts for file downloads or elevated browser permissions.");
+  }
 
-  let proposedAction = destinationHost ? `Navigating to ${destinationHost}.` : "Navigating to this destination.";
-  let consequenceIfProceed = "Routine web browsing with no special actions requested.";
-
-  if (facts.credentialOrPaymentRequest || facts.hasPasswordField) {
-    proposedAction = `Submitting credentials or personal details on ${destinationHost || "the page"}.`;
-    if (riskOutcome === "High risk" || riskOutcome === "Suspicious") {
-      consequenceIfProceed = claimedOrg
-        ? `Credentials entered may be stolen by an unauthorized third party masquerading as ${claimedOrg}. This can lead to account takeover and identity theft.`
-        : "Credentials entered may be captured by an unverified destination, exposing your account to unauthorized access.";
+  if (facts.hasPasswordField || facts.credentialOrPaymentRequest) {
+    if (isOfficial) {
+      riskFactors.push("Destination provides an authentic account sign-in option.");
+    } else if (hasImpersonation || hasPhishingThreat) {
+      riskFactors.push("Destination prompts for account credentials on a suspicious or impersonated domain.");
     } else {
-      consequenceIfProceed = "Credentials will be submitted to the service. Ensure you have verified the address in your browser bar.";
+      riskFactors.push("Destination prompts for account credentials on an unverified destination.");
     }
+  }
+
+  // 2. Proposed Action
+  let proposedAction = destinationHost ? `Navigating to ${destinationHost}.` : "Navigating to this destination.";
+
+  if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
+    proposedAction = `Submitting credentials on ${destinationHost || "the page"}.`;
+  } else if (facts.hasPaymentField) {
+    proposedAction = `Submitting payment details on ${destinationHost || "the page"}.`;
   } else if (facts.downloadOrPermissionRequest) {
     proposedAction = `Downloading or executing files prompted by ${destinationHost || "the page"}.`;
+  }
+
+  // 3. Consequence Simulation
+  let consequenceIfProceed = "Routine web browsing with no special actions requested.";
+
+  if (hasImpersonation || hasPhishingThreat) {
+    // Evidence-backed impersonation or credential harvesting
+    if (facts.credentialOrPaymentRequest || facts.hasPasswordField) {
+      consequenceIfProceed = claimedOrg
+        ? `Credentials entered may be stolen by an unauthorized third party masquerading as ${claimedOrg}. This can lead to account takeover and identity theft.`
+        : "Credentials entered may be captured by a fraudulent or deceptive destination, exposing your account to unauthorized access.";
+    } else {
+      consequenceIfProceed = claimedOrg
+        ? `This destination appears to be an unauthorized site masquerading as ${claimedOrg}. Proceeding exposes you to deceptive content.`
+        : "This destination exhibits indicators of deception or impersonation. Do not proceed or disclose personal information.";
+    }
+  } else if (isOfficial) {
+    // Authentic official domain: never claim masquerading
+    if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
+      consequenceIfProceed = `Credentials will be submitted to the official ${claimedOrg || destinationHost} service. Ensure you intended to sign in.`;
+    } else if (riskOutcome === "Suspicious" || riskOutcome === "High risk") {
+      consequenceIfProceed = `You are connecting to an authentic service for ${claimedOrg || destinationHost}, but specific warnings were flagged. Review the findings before proceeding.`;
+    } else {
+      consequenceIfProceed = "Routine web browsing with no special actions requested.";
+    }
+  } else if (hasCredentialWarning) {
+    // Unverified destination with credential prompts (no confirmed brand match)
+    consequenceIfProceed =
+      "Credentials entered may be captured by an unverified destination, exposing your account to unauthorized access.";
+  } else if (facts.downloadOrPermissionRequest) {
     if (riskOutcome === "High risk" || riskOutcome === "Suspicious") {
       consequenceIfProceed = "Downloading unverified files can install unwanted software, malware, or spyware on your device.";
     } else {
       consequenceIfProceed = "A file will be saved to your device. Verify its digital signature before opening.";
     }
   } else if (riskOutcome === "Unknown") {
-    proposedAction = `Browsing to unverified destination ${destinationHost || ""}.`;
     consequenceIfProceed = "The destination could not be validated by independent checks. Proceed with extra caution and do not disclose sensitive details.";
+  } else if (riskOutcome === "Suspicious") {
+    consequenceIfProceed = "Specific warning signs were detected on this page. Review the evidence findings before taking sensitive actions.";
+  } else if (riskOutcome === "High risk") {
+    consequenceIfProceed = "Severe security threats were detected on this destination. Close the tab immediately.";
   }
 
   return {
@@ -565,18 +723,34 @@ export function assessInvestigation(params: {
   const structuredLogin = booleanOrStringFlag(structured?.login_form_observed);
   const structuredPassword = booleanOrStringFlag(structured?.password_field_observed);
   const structuredPayment = booleanOrStringFlag(structured?.payment_field_observed);
-  const downloadRequested = booleanOrStringFlag(structured?.download_or_permission_request);
+  let structuredDownload = booleanOrStringFlag(structured?.download_or_permission_request);
+  const appStoreLinkOnly = booleanOrStringFlag(structured?.app_store_or_informational_link_only);
 
   const credOrPaymentRequested = structuredCred || structuredPassword || structuredPayment;
   const hasPasswordField = structuredPassword;
   const hasPaymentField = structuredPayment;
   const formsObserved = structuredLogin || structuredPassword || structuredPayment || credOrPaymentRequested;
 
+  // Distinguish ordinary app-store / informational links from active download prompts
+  const visiblePurposeText = sanitizeText(structured?.visible_purpose);
+  const overallObsText = sanitizeText(structured?.overall_observation);
+  const warningsCombined = stringList(structured?.observed_warning_signs).join(" ");
+  const rawEvidenceText = `${visiblePurposeText} ${overallObsText} ${warningsCombined} ${rawText}`;
+  let isInformationalAppStoreLink = appStoreLinkOnly;
+  if (appStoreLinkOnly) {
+    structuredDownload = false;
+  } else if (structuredDownload) {
+    if (isAppStoreOrInformationalDownload(rawEvidenceText) && !isActiveDownloadOrPermissionPrompt(rawEvidenceText)) {
+      isInformationalAppStoreLink = true;
+      structuredDownload = false;
+    }
+  }
+
   const observedFacts: ObservedFacts = {
     pageTitle: sanitizeText(structured?.page_title),
-    visiblePurpose: sanitizeText(structured?.visible_purpose),
+    visiblePurpose: visiblePurposeText,
     credentialOrPaymentRequest: credOrPaymentRequested,
-    downloadOrPermissionRequest: downloadRequested,
+    downloadOrPermissionRequest: structuredDownload,
     formsObserved,
     hasPasswordField,
     hasPaymentField,
@@ -656,11 +830,26 @@ export function assessInvestigation(params: {
     warningSigns.push(item.label);
   }
 
+  // Reserved Example Domain Handling (RFC 2606)
+  const isReservedExample = isReservedExampleDomain(submittedHost);
+  let claimedOrg = sanitizeText(structured?.claimed_organization);
+
+  if (isReservedExample) {
+    // Example domains do not claim to represent IANA/ICANN; references are informational
+    claimedOrg = "";
+    evidenceItems.push({
+      label: "Reserved Documentation Domain",
+      detail:
+        "The destination is an officially reserved example/documentation domain (RFC 2606 / RFC 6761). References to standards bodies or other organizations are informational references and do not represent corporate brand claims.",
+      kind: "neutral",
+      provenance: "url_structure",
+    });
+  }
+
   // Claimed Organization & Brand Registry Affiliation Evaluation
-  const claimedOrg = sanitizeText(structured?.claimed_organization);
   const brandAffiliation = evaluateBrandAffiliation(claimedOrg, submittedHost);
 
-  if (claimedOrg) {
+  if (claimedOrg && !isReservedExample) {
     evidenceItems.push({
       label: "Claimed Identity",
       detail: `The page presents itself as representing: ${claimedOrg}.`,
@@ -681,8 +870,8 @@ export function assessInvestigation(params: {
       warningSigns.push(mismatchItem.label);
     } else if (brandAffiliation.isOfficialDomain) {
       evidenceItems.push({
-        label: "Official Brand Domain Verified",
-        detail: `The domain (${submittedHost}) matches the official domain registry for ${brandAffiliation.canonicalBrand}.`,
+        label: "Matches Configured Brand Registry",
+        detail: `The domain (${submittedHost}) matches the configured brand-domain registry for ${brandAffiliation.canonicalBrand}.`,
         kind: "positive",
         provenance: "policy_rule",
       });
@@ -725,7 +914,18 @@ export function assessInvestigation(params: {
     }
   }
 
-  // File download prompt
+  // Informational app store link vs active download prompt
+  if (isInformationalAppStoreLink) {
+    evidenceItems.push({
+      label: "Informational App Store Link",
+      detail:
+        "The page provides standard links to official mobile app stores or download pages; no automatic download or browser permission prompt was triggered.",
+      kind: "neutral",
+      provenance: "browser_observation",
+    });
+  }
+
+  // Active file download prompt
   if (observedFacts.downloadOrPermissionRequest) {
     const item: Finding = {
       label: "Download or Permission Prompt Observed",
@@ -750,7 +950,7 @@ export function assessInvestigation(params: {
     warningSigns.push(injectionItem.label);
   }
 
-  // Agent observed warning signs with Negation & Probe Limitation Filtering
+  // Agent observed warning signs with Negation, Limitation, Donation & App-Store Filtering
   const agentWarnings = stringList(structured?.observed_warning_signs);
   for (const rawW of agentWarnings) {
     if (isNegationOrNonWarning(rawW)) {
@@ -764,6 +964,26 @@ export function assessInvestigation(params: {
       }
       evidenceItems.push({
         label: "Investigation Limitation",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
+    if (isOrdinaryDonationAppeal(rawW)) {
+      // Route ordinary donation/fundraising appeals to neutral observations
+      evidenceItems.push({
+        label: "Fundraising / Donation Appeal Observed",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
+    if (isAppStoreOrInformationalDownload(rawW) && !isActiveDownloadOrPermissionPrompt(rawW)) {
+      // Route informational app-store links to neutral findings
+      evidenceItems.push({
+        label: "Informational App Store Link",
         detail: rawW,
         kind: "neutral",
         provenance: "browser_observation",
@@ -896,8 +1116,46 @@ export function assessInvestigation(params: {
     missingEvidence.push("Independent third-party verification of domain ownership.");
   }
 
-  // 7. Action Preview
-  const actionPreview = generateActionPreview(observedFacts, riskOutcome, claimedOrg, finalHost || submittedHost);
+  // 7. Action Preview Grounding
+  const submittedPath = submittedUrl.pathname.toLowerCase();
+  const isHomepageOrGeneralPortal =
+    (submittedPath === "" || submittedPath === "/") &&
+    !/^\/(login|signin|sign-in|auth)/i.test(submittedPath);
+
+  const isDedicatedLoginPurpose =
+    /^(user\s+)?(login|sign\s*in|authentication)(\s+portal|\s+page|\s+form)?$/i.test(visiblePurposeText.trim());
+
+  const isExplicitLoginDestination =
+    /^\/(login|signin|sign-in|auth|log-in|account\/login|users\/sign_in)(\/|$)/i.test(submittedPath) ||
+    (!isHomepageOrGeneralPortal && isDedicatedLoginPurpose && (structuredCred || structuredPassword));
+
+  const hasImpersonation =
+    brandAffiliation.hasMismatch ||
+    warningSigns.some((w) => /impersonat|masquerad|look-alike|typosquat/i.test(w));
+
+  const hasPhishingThreat =
+    confirmedHighSignal ||
+    warningSigns.some((w) =>
+      /phishing|credential\s+harvesting|credential\s+theft|fake\s+sign-in|cloned\s+login/i.test(w)
+    );
+
+  const hasCredentialWarning =
+    warningSigns.includes("Credential or Payment Input Form Observed") ||
+    warningSigns.includes("Credential Form on Impersonated Domain");
+
+  const actionPreview = generateActionPreview(
+    observedFacts,
+    riskOutcome,
+    claimedOrg || undefined,
+    finalHost || submittedHost,
+    {
+      isOfficialDomain: brandAffiliation.isOfficialDomain,
+      hasImpersonation,
+      hasPhishingThreat,
+      hasCredentialWarning,
+      isExplicitLoginDestination,
+    }
+  );
 
   // 8. Explicit Transparency Limitations
   const limitations = [

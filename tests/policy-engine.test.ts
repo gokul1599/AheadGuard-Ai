@@ -277,7 +277,7 @@ describe("False-Positive Elimination & Grounded Policy Hardening (Scenarios 1 - 
     expect(report.warningSigns).toHaveLength(0);
     expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
     expect(report.evidenceItems.some((f) => f.label === "Credential or Payment Input Form Observed")).toBe(false);
-    expect(report.evidenceItems.some((f) => f.label === "Official Brand Domain Verified")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
   });
 
   it("Scenario 2: Descriptive sentence mentioning sign-in without observed form does not trigger false credential warning", () => {
@@ -375,7 +375,7 @@ describe("False-Positive Elimination & Grounded Policy Hardening (Scenarios 1 - 
 
     const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
 
-    expect(report.evidenceItems.some((f) => f.label === "Official Brand Domain Verified")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
     expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
     expect(report.riskOutcome).toBe("Low observed risk");
   });
@@ -556,6 +556,496 @@ describe("False-Positive Elimination & Grounded Policy Hardening (Scenarios 1 - 
 
     const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
 
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toMatch(/could not be completed/i);
+    expect(report.missingEvidence.includes("Complete live page inspection could not be finished.")).toBe(true);
+    expect(report.recommendedAction).toMatch(/Do not proceed until you verify/i);
+  });
+});
+
+describe("Production Investigation Hardening & False-Positive Elimination (12 Required Scenarios)", () => {
+  it("Test 1: example.com is not classified as an official IANA brand domain", () => {
+    const url = new URL("https://example.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "This domain is for use in illustrative examples in documents. More information...",
+      structuredResult: {
+        page_title: "Example Domain",
+        observed_final_url: "https://example.com/",
+        claimed_organization: "IANA / Internet Corporation for Assigned Names and Numbers (ICANN)",
+        visible_purpose: "Illustrative example documentation",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Valid HTTPS", "Standard RFC 2606 example domain"],
+        checks_performed: ["Inspected documentation text", "Checked for interactive forms"],
+        unknowns: [],
+        overall_observation: "Standard RFC 2606 reserved example domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observation: claimed org is NOT attributed to IANA
+    expect(report.claimedOrganization).toBeUndefined();
+    // Assert provenance and evidence items
+    const reservedFinding = report.evidenceItems.find((f) => f.label === "Reserved Documentation Domain");
+    expect(reservedFinding).toBeDefined();
+    expect(reservedFinding?.kind).toBe("neutral");
+    expect(reservedFinding?.provenance).toBe("url_structure");
+    // Assert it does NOT claim official IANA registry match
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
+    // Assert warnings, missing evidence, verdict, and action preview
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to example.com.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 2: iana.org matches the configured IANA registry", () => {
+    const url = new URL("https://www.iana.org/domains/reserved");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Official IANA root zone and registry management portal.",
+      structuredResult: {
+        page_title: "IANA — Root Zone Management",
+        observed_final_url: "https://www.iana.org/domains/reserved",
+        claimed_organization: "Internet Assigned Numbers Authority (IANA)",
+        visible_purpose: "Internet standards and domain registries",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official registry portal", "Valid TLS certificate"],
+        checks_performed: ["Domain ownership validation", "Certificate inspection"],
+        unknowns: [],
+        overall_observation: "Authentic IANA website on registered iana.org domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observation
+    expect(report.claimedOrganization).toBe("Internet Assigned Numbers Authority (IANA)");
+    // Assert provenance and evidence item for configured brand match
+    const brandFinding = report.evidenceItems.find((f) => f.label === "Matches Configured Brand Registry");
+    expect(brandFinding).toBeDefined();
+    expect(brandFinding?.kind).toBe("positive");
+    expect(brandFinding?.provenance).toBe("policy_rule");
+    expect(brandFinding?.detail).toContain("matches the configured brand-domain registry");
+    // Assert warnings, missing evidence, verdict, and action preview
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to www.iana.org.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 3: A page referencing IANA does not automatically claim to represent IANA", () => {
+    const url = new URL("https://docs.networking-guide.org/standards");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Tutorial referencing IANA port numbers and RFC definitions.",
+      structuredResult: {
+        page_title: "Networking Guide - Standard Ports",
+        observed_final_url: "https://docs.networking-guide.org/standards",
+        // Page discusses IANA, but model correctly leaves claimed_organization empty
+        claimed_organization: undefined,
+        visible_purpose: "Educational article referencing IANA and RFC standards",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Valid HTTPS encryption", "Educational documentation"],
+        checks_performed: ["Checked for credential inputs"],
+        unknowns: [],
+        overall_observation: "Documentation page explaining standard network ports.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observations
+    expect(report.claimedOrganization).toBeUndefined();
+    // Assert evidence items: no spurious brand registry match or false mismatch
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to docs.networking-guide.org.");
+  });
+
+  it("Test 4: YouTube continues to pass the existing false-positive regression test", () => {
+    const url = new URL("https://www.youtube.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText:
+        "YouTube video catalog loads cleanly. Users can click sign in in the header to authenticate with their Google account. No login or password credentials requested on the main feed.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube - A Google company",
+        visible_purpose: "Video sharing platform",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official YouTube domain", "Valid HTTPS encryption"],
+        checks_performed: ["Inspected header links", "SSL certificate validation"],
+        unknowns: [],
+        overall_observation: "Official YouTube homepage with standard video recommendations.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observations and brand resolution
+    expect(report.claimedOrganization).toBe("YouTube - A Google company");
+    expect(report.observedFacts.credentialOrPaymentRequest).toBe(false);
+    expect(report.observedFacts.hasPasswordField).toBe(false);
+    // Assert evidence provenance
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry" && f.kind === "positive")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Credential or Payment Input Form Observed")).toBe(false);
+    expect(report.evidenceItems.some((f) => f.label === "Branding vs Domain Discrepancy")).toBe(false);
+    // Assert warnings, verdict, and action preview
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to www.youtube.com.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 5: Wikipedia's ordinary app-store links do not become download prompts", () => {
+    const url = new URL("https://www.wikipedia.org/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Wikipedia landing page with links to mobile apps in Google Play and Apple App Store.",
+      structuredResult: {
+        page_title: "Wikipedia, the free encyclopedia",
+        observed_final_url: "https://www.wikipedia.org/",
+        claimed_organization: "Wikimedia Foundation",
+        visible_purpose: "Online encyclopedia with links to official mobile app stores",
+        // Model flags true due to reading 'Download on the App Store' link text
+        download_or_permission_request: true,
+        app_store_or_informational_link_only: true,
+        observed_warning_signs: ["Links to download Wikipedia mobile app from Google Play and Apple App Store"],
+        positive_signals: ["Established non-profit domain", "Valid HTTPS encryption"],
+        checks_performed: ["Inspected app links", "Checked for active downloads"],
+        unknowns: [],
+        overall_observation: "Standard Wikipedia landing portal with educational content and app-store links.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observation: app store link is distinguished from active download prompt
+    expect(report.observedFacts.downloadOrPermissionRequest).toBe(false);
+    // Assert provenance: Informational App Store Link recorded as neutral
+    const appLinkFinding = report.evidenceItems.find((f) => f.label === "Informational App Store Link");
+    expect(appLinkFinding).toBeDefined();
+    expect(appLinkFinding?.kind).toBe("neutral");
+    expect(appLinkFinding?.provenance).toBe("browser_observation");
+    expect(report.evidenceItems.some((f) => f.label === "Download or Permission Prompt Observed")).toBe(false);
+    // Assert warnings, verdict, and action preview
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to www.wikipedia.org.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 6: Ordinary donation-banner language alone does not create a phishing warning", () => {
+    const url = new URL("https://www.wikipedia.org/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Wikipedia annual fundraising campaign banner active.",
+      structuredResult: {
+        page_title: "Wikipedia",
+        observed_final_url: "https://www.wikipedia.org/",
+        claimed_organization: "Wikimedia Foundation",
+        visible_purpose: "Encyclopedia with non-profit donation appeal",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "Annual fundraising appeal asks for donations with emotional appeal: 'please don't scroll past this'",
+          "Fundraising banner urges readers to support Wikipedia's non-profit mission",
+        ],
+        positive_signals: ["Official Wikimedia domain", "Valid TLS encryption"],
+        checks_performed: ["Banner content analysis"],
+        unknowns: [],
+        overall_observation: "Educational site displaying annual fundraising appeal banner.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert provenance: donation banner routed to neutral finding, NOT warning
+    const donationFinding = report.evidenceItems.find((f) => f.label === "Fundraising / Donation Appeal Observed");
+    expect(donationFinding).toBeDefined();
+    expect(donationFinding?.kind).toBe("neutral");
+    expect(donationFinding?.provenance).toBe("browser_observation");
+    // Assert warnings, verdict, and action preview
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 7: Explicitly observed deceptive urgency remains a warning", () => {
+    const url = new URL("https://account-verify-support.security-auth.net/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Phishing page claiming account suspension.",
+      structuredResult: {
+        page_title: "Account Security Center",
+        observed_final_url: "https://account-verify-support.security-auth.net/",
+        claimed_organization: "Account Security",
+        visible_purpose: "Coercive verification portal",
+        credential_or_payment_request: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "Urgent security verification: account will be suspended within 24 hours if credentials are not verified",
+          "Artificial countdown timer creating coercive pressure to enter credentials",
+        ],
+        positive_signals: [],
+        checks_performed: ["Identified credential harvesting fields", "Evaluated urgency language"],
+        unknowns: [],
+        overall_observation: "Deceptive portal demanding immediate credential submission under threat of suspension.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observations and warnings
+    expect(report.warningSigns.length).toBeGreaterThanOrEqual(1);
+    expect(report.warningSigns.some((w) => w.includes("account will be suspended"))).toBe(true);
+    // Assert provenance: warning kind
+    const warningItem = report.evidenceItems.find((f) => f.label === "Observed Warning Sign");
+    expect(warningItem).toBeDefined();
+    expect(warningItem?.kind).toBe("warning");
+    // Assert verdict and action preview
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+    expect(report.actionPreview.riskFactors.length).toBeGreaterThan(0);
+  });
+
+  it("Test 8: A genuine download or elevated-permission prompt remains detectable", () => {
+    const url = new URL("https://software-free-download.malicious-dist.cc/setup");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Page initiates direct executable download.",
+      structuredResult: {
+        page_title: "Free Software Installer",
+        observed_final_url: "https://software-free-download.malicious-dist.cc/setup",
+        visible_purpose: "Direct software distribution",
+        download_or_permission_request: true,
+        automatic_download_observed: true,
+        observed_warning_signs: [
+          "Automatic download of player_setup.exe initiated upon page load",
+          "Browser permission prompt requested for notification and camera access",
+        ],
+        positive_signals: [],
+        checks_performed: ["Download prompt monitoring"],
+        unknowns: [],
+        overall_observation: "Untrusted destination initiating automatic executable downloads and permission dialogs.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert structured observation: active download prompt is confirmed
+    expect(report.observedFacts.downloadOrPermissionRequest).toBe(true);
+    // Assert provenance: warning finding
+    const dlFinding = report.evidenceItems.find((f) => f.label === "Download or Permission Prompt Observed");
+    expect(dlFinding).toBeDefined();
+    expect(dlFinding?.kind).toBe("warning");
+    expect(dlFinding?.provenance).toBe("browser_observation");
+    expect(report.warningSigns.includes("Download or Permission Prompt Observed")).toBe(true);
+    // Assert verdict and consequence simulation
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Downloading unverified files can install unwanted software|malware/i);
+  });
+
+  it("Test 9: An authentic sign-in form does not automatically imply credential theft", () => {
+    const url = new URL("https://www.wikipedia.org/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Wikipedia portal with authentic login option.",
+      structuredResult: {
+        page_title: "Wikipedia, the free encyclopedia",
+        observed_final_url: "https://www.wikipedia.org/",
+        claimed_organization: "Wikimedia Foundation",
+        visible_purpose: "Online encyclopedia with optional user login",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official Wikimedia Foundation domain", "Valid HTTPS encryption"],
+        checks_performed: ["Inspected sign-in form"],
+        unknowns: [],
+        overall_observation: "Official Wikipedia site with authentic user sign-in option.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert provenance: authentic form on official domain is neutral, NOT warning
+    const authFinding = report.evidenceItems.find((f) => f.label === "Authentic Sign-in Form Observed");
+    expect(authFinding).toBeDefined();
+    expect(authFinding?.kind).toBe("neutral");
+    expect(authFinding?.provenance).toBe("browser_observation");
+    expect(report.warningSigns.includes("Credential Form on Impersonated Domain")).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+    // Assert verdict: Low observed risk, High consequence impact due to password entry, Low threat likelihood
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("High");
+    // Assert Action Preview describes browsing to homepage and NEVER claims credentials may be stolen by impersonator
+    expect(report.actionPreview.proposedAction).toBe("Navigating to www.wikipedia.org.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+    expect(report.actionPreview.consequenceIfProceed).not.toMatch(/stolen by an unauthorized third party masquerading/i);
+  });
+
+  it("Test 10: A credential form on a demonstrably impersonating domain remains suspicious or high risk", () => {
+    const url = new URL("https://wikipedia-login-security.phish.org/wiki/Special:Login");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Cloned Wikipedia sign in interface on non-approved domain.",
+      structuredResult: {
+        page_title: "Log in - Wikipedia",
+        observed_final_url: "https://wikipedia-login-security.phish.org/wiki/Special:Login",
+        claimed_organization: "Wikimedia Foundation",
+        visible_purpose: "Credential harvesting",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "Cloned Wikipedia sign in interface on non-approved domain",
+          "requests credentials",
+        ],
+        positive_signals: [],
+        checks_performed: ["Domain discrepancy analysis", "Credential form detection"],
+        unknowns: [],
+        overall_observation: "Phishing portal masquerading as Wikimedia Foundation on an unapproved domain.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert provenance: mismatch and impersonation warnings
+    const mismatchFinding = report.evidenceItems.find((f) => f.label === "Branding vs Domain Discrepancy");
+    expect(mismatchFinding).toBeDefined();
+    expect(mismatchFinding?.kind).toBe("warning");
+    expect(mismatchFinding?.provenance).toBe("policy_rule");
+
+    const impersonationFinding = report.evidenceItems.find((f) => f.label === "Credential Form on Impersonated Domain");
+    expect(impersonationFinding).toBeDefined();
+    expect(impersonationFinding?.kind).toBe("warning");
+    expect(impersonationFinding?.provenance).toBe("policy_rule");
+
+    // Assert warnings, verdict, and action preview
+    expect(report.warningSigns.length).toBeGreaterThanOrEqual(2);
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(
+      /Credentials entered may be stolen by an unauthorized third party masquerading as Wikimedia Foundation/i
+    );
+  });
+
+  it("Test 11: Action Preview accurately distinguishes browsing to a site from submitting credentials", () => {
+    // Scenario A: Browsing YouTube homepage
+    const homeUrl = new URL("https://www.youtube.com/");
+    const homeResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "YouTube homepage with video recommendations.",
+      structuredResult: {
+        page_title: "YouTube",
+        observed_final_url: "https://www.youtube.com/",
+        claimed_organization: "YouTube",
+        visible_purpose: "Video sharing platform",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official domain"],
+        checks_performed: ["Routine navigation"],
+        unknowns: [],
+      },
+    };
+    const homeReport = assessInvestigation({ submittedUrl: homeUrl, tinyFishResult: homeResult });
+    expect(homeReport.actionPreview.proposedAction).toBe("Navigating to www.youtube.com.");
+    expect(homeReport.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+
+    // Scenario B: Dedicated login endpoint
+    const loginUrl = new URL("https://accounts.google.com/signin");
+    const loginResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Official Google account sign-in endpoint.",
+      structuredResult: {
+        page_title: "Sign in - Google Accounts",
+        observed_final_url: "https://accounts.google.com/signin",
+        claimed_organization: "Google",
+        visible_purpose: "User authentication",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official Google domain"],
+        checks_performed: ["Credential field check"],
+        unknowns: [],
+      },
+    };
+    const loginReport = assessInvestigation({ submittedUrl: loginUrl, tinyFishResult: loginResult });
+    expect(loginReport.actionPreview.proposedAction).toBe("Submitting credentials on accounts.google.com.");
+    expect(loginReport.actionPreview.consequenceIfProceed).toMatch(/Credentials will be submitted to the official Google service/i);
+    expect(loginReport.actionPreview.consequenceIfProceed).not.toMatch(/stolen by an unauthorized third party masquerading/i);
+  });
+
+  it("Test 12: Incomplete investigations remain UNKNOWN", () => {
+    const url = new URL("https://www.wikipedia.org/");
+    const failedResult: TinyFishExecutionResult = {
+      success: false,
+      goalFailed: true,
+      errorMessage: "Investigation stream ended unexpectedly without a COMPLETE event",
+      eventsCount: 2,
+      rawAgentText: "",
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult: failedResult });
+
+    // Assert verdict and reasoning: never assume safety
     expect(report.riskOutcome).toBe("Unknown");
     expect(report.threatLikelihood).toBe("Uncertain");
     expect(report.outcomeReason).toMatch(/could not be completed/i);
