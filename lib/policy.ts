@@ -139,7 +139,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   paypal: {
     canonicalName: "PayPal",
     aliases: ["paypal", "paypal inc"],
-    approvedDomains: ["paypal.com", "paypal.me"],
+    approvedDomains: ["paypal.com"],
     affiliatedAuthDomains: [],
   },
   meta: {
@@ -169,7 +169,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   github: {
     canonicalName: "GitHub",
     aliases: ["github", "github inc"],
-    approvedDomains: ["github.com", "github.io"],
+    approvedDomains: ["github.com"],
     affiliatedAuthDomains: [],
   },
   chase: {
@@ -209,6 +209,31 @@ export function isReservedExampleDomain(hostname: string): boolean {
     h.endsWith(".example.edu") ||
     h === "example" ||
     h.endsWith(".example")
+  );
+}
+
+/**
+ * Checks whether a given hostname is a hosted payment profile destination (e.g. PayPal.Me).
+ */
+export function isHostedPaymentDestination(hostname: string): boolean {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase().trim();
+  return h === "paypal.me" || h === "www.paypal.me" || h.endsWith(".paypal.me");
+}
+
+/**
+ * Checks whether a given hostname is a user-hosted content / pages platform (e.g. GitHub Pages).
+ */
+export function isUserHostedPlatform(hostname: string): boolean {
+  if (!hostname) return false;
+  const h = hostname.toLowerCase().trim();
+  return (
+    h === "github.io" ||
+    h.endsWith(".github.io") ||
+    h === "gitlab.io" ||
+    h.endsWith(".gitlab.io") ||
+    h === "pages.dev" ||
+    h.endsWith(".pages.dev")
   );
 }
 
@@ -253,6 +278,8 @@ export interface BrandAffiliationResult {
   isAffiliatedDomain: boolean;
   hasMismatch: boolean;
   isReservedExample?: boolean;
+  isHostedPayment?: boolean;
+  isUserHostedPlatform?: boolean;
   reason?: string;
 }
 
@@ -273,6 +300,89 @@ export function evaluateBrandAffiliation(
       hasMismatch: false,
       isReservedExample: true,
       reason: "Reserved documentation/example domain (RFC 2606); references to third-party organizations are informational.",
+    };
+  }
+
+  // 2. Hosted payment platforms (e.g. PayPal.Me) are individual account destinations, not corporate official domains
+  if (isHostedPaymentDestination(hostname)) {
+    const isClaimingDifferentBrand =
+      claimedOrg &&
+      !/paypal/i.test(claimedOrg) &&
+      Object.values(BRAND_DOMAIN_REGISTRY).some((b) =>
+        b.aliases.some((a) => a === claimedOrg.toLowerCase().trim())
+      );
+
+    if (isClaimingDifferentBrand) {
+      return {
+        isRegisteredBrand: true,
+        canonicalBrand: claimedOrg,
+        isOfficialDomain: false,
+        isAffiliatedDomain: false,
+        hasMismatch: true,
+        isHostedPayment: true,
+        reason: `The page claims to represent "${claimedOrg}", but the destination (${hostname}) is a hosted payment link.`,
+      };
+    }
+
+    return {
+      isRegisteredBrand: false,
+      canonicalBrand: "PayPal.Me",
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+      isHostedPayment: true,
+      reason: "Hosted payment link platform (paypal.me); payments are directed to individual recipient accounts.",
+    };
+  }
+
+  // 3. User-hosted platform domains (e.g. *.github.io)
+  if (isUserHostedPlatform(hostname)) {
+    if (claimedOrg && claimedOrg.trim()) {
+      const rawOrgLower = claimedOrg.toLowerCase().trim();
+      const canonical = extractCanonicalBrandName(claimedOrg);
+      const canonicalLower = canonical.toLowerCase().trim();
+
+      let matchedEntry: BrandRegistryEntry | undefined;
+      for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+        const entryNameLower = entry.canonicalName.toLowerCase();
+        if (
+          entryNameLower === canonicalLower ||
+          entryNameLower === rawOrgLower ||
+          entry.aliases.some(
+            (alias) =>
+              alias === canonicalLower ||
+              alias === rawOrgLower ||
+              rawOrgLower.startsWith(alias) ||
+              canonicalLower.startsWith(alias)
+          )
+        ) {
+          matchedEntry = entry;
+          break;
+        }
+      }
+
+      if (matchedEntry) {
+        return {
+          isRegisteredBrand: true,
+          brandEntry: matchedEntry,
+          canonicalBrand: matchedEntry.canonicalName,
+          isOfficialDomain: false,
+          isAffiliatedDomain: false,
+          hasMismatch: true,
+          isUserHostedPlatform: true,
+          reason: `The page claims to represent "${matchedEntry.canonicalName}", but the domain (${hostname}) is a user-hosted site (${matchedEntry.canonicalName === "GitHub" ? "github.io" : hostname}), not the official corporate domain (${matchedEntry.approvedDomains.join(", ")}).`,
+        };
+      }
+    }
+
+    return {
+      isRegisteredBrand: false,
+      canonicalBrand: "",
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+      isUserHostedPlatform: true,
+      reason: "User-hosted platform domain; content is published by individual users and does not prove page owner identity.",
     };
   }
 
@@ -523,6 +633,8 @@ export interface ActionPreviewOptions {
   hasPhishingThreat?: boolean;
   hasCredentialWarning?: boolean;
   isExplicitLoginDestination?: boolean;
+  isHostedPayment?: boolean;
+  isUserHostedPlatform?: boolean;
 }
 
 /**
@@ -542,6 +654,8 @@ export function generateActionPreview(
   const hasPhishingThreat = options?.hasPhishingThreat ?? false;
   const hasCredentialWarning = options?.hasCredentialWarning ?? false;
   const isExplicitLogin = options?.isExplicitLoginDestination ?? false;
+  const isHostedPayment = options?.isHostedPayment ?? false;
+  const isUserHostedPlatform = options?.isUserHostedPlatform ?? false;
 
   // 1. Risk Factors Grounding
   if (facts.isHttp) {
@@ -570,7 +684,9 @@ export function generateActionPreview(
   // 2. Proposed Action
   let proposedAction = destinationHost ? `Navigating to ${destinationHost}.` : "Navigating to this destination.";
 
-  if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
+  if (isHostedPayment && (facts.hasPaymentField || facts.credentialOrPaymentRequest)) {
+    proposedAction = `Submitting payment or transfer details on ${destinationHost || "paypal.me"}.`;
+  } else if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
     proposedAction = `Submitting credentials on ${destinationHost || "the page"}.`;
   } else if (facts.hasPaymentField) {
     proposedAction = `Submitting payment details on ${destinationHost || "the page"}.`;
@@ -592,6 +708,15 @@ export function generateActionPreview(
         ? `This destination appears to be an unauthorized site masquerading as ${claimedOrg}. Proceeding exposes you to deceptive content.`
         : "This destination exhibits indicators of deception or impersonation. Do not proceed or disclose personal information.";
     }
+  } else if (isHostedPayment) {
+    // Hosted payment link (e.g. PayPal.Me)
+    if (facts.hasPaymentField || facts.credentialOrPaymentRequest) {
+      consequenceIfProceed =
+        "Payment will be processed via hosted payment link. Verify the intended recipient before confirming transfer.";
+    } else {
+      consequenceIfProceed =
+        "Routine browsing on a hosted payment profile page. Confirm recipient details before sending funds.";
+    }
   } else if (isOfficial) {
     // Authentic official domain: never claim masquerading
     if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
@@ -601,6 +726,9 @@ export function generateActionPreview(
     } else {
       consequenceIfProceed = "Routine web browsing with no special actions requested.";
     }
+  } else if (isUserHostedPlatform && (facts.hasPasswordField || facts.credentialOrPaymentRequest)) {
+    consequenceIfProceed =
+      "Credentials entered on this user-hosted page will be received by an individual account holder, not a verified organization. Do not submit sensitive passwords.";
   } else if (hasCredentialWarning) {
     // Unverified destination with credential prompts (no confirmed brand match)
     consequenceIfProceed =
@@ -830,8 +958,10 @@ export function assessInvestigation(params: {
     warningSigns.push(item.label);
   }
 
-  // Reserved Example Domain Handling (RFC 2606)
+  // Reserved Example Domain Handling (RFC 2606) & Platform Service Classification
   const isReservedExample = isReservedExampleDomain(submittedHost);
+  const isHostedPayment = isHostedPaymentDestination(submittedHost);
+  const isUserHosted = isUserHostedPlatform(submittedHost);
   let claimedOrg = sanitizeText(structured?.claimed_organization);
 
   if (isReservedExample) {
@@ -844,6 +974,28 @@ export function assessInvestigation(params: {
       kind: "neutral",
       provenance: "url_structure",
     });
+  } else if (isHostedPayment) {
+    evidenceItems.push({
+      label: "Hosted Payment Destination",
+      detail:
+        "The destination is a hosted payment link (e.g. PayPal.Me). While operated on payment provider infrastructure, transactions are directed to individual or merchant recipient accounts whose identity requires independent verification.",
+      kind: "neutral",
+      provenance: "url_structure",
+    });
+    missingEvidence.push(
+      "Independent verification of the specific recipient account owner on the hosted payment service."
+    );
+  } else if (isUserHosted) {
+    evidenceItems.push({
+      label: "User-Hosted Content Platform",
+      detail:
+        `The destination (${submittedHost}) is hosted on a user-generated content platform (e.g. GitHub Pages). The hosting platform domain does not prove the identity of the page owner.`,
+      kind: "neutral",
+      provenance: "url_structure",
+    });
+    missingEvidence.push(
+      "Independent verification of publisher identity on user-hosted platform."
+    );
   }
 
   // Claimed Organization & Brand Registry Affiliation Evaluation
@@ -1154,6 +1306,8 @@ export function assessInvestigation(params: {
       hasPhishingThreat,
       hasCredentialWarning,
       isExplicitLoginDestination,
+      isHostedPayment,
+      isUserHostedPlatform: isUserHosted,
     }
   );
 
