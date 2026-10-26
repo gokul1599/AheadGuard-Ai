@@ -192,10 +192,238 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     approvedDomains: ["wellsfargo.com"],
     affiliatedAuthDomains: [],
   },
+  capitalone: {
+    canonicalName: "Capital One",
+    aliases: ["capital one", "capitalone", "capital one bank", "capital one financial"],
+    approvedDomains: ["capitalone.com"],
+    affiliatedAuthDomains: [],
+  },
+  citi: {
+    canonicalName: "Citigroup (Citi)",
+    aliases: ["citi", "citigroup", "citibank"],
+    approvedDomains: ["citigroup.com", "citi.com", "citibank.com"],
+    affiliatedAuthDomains: [],
+  },
+  stripe: {
+    canonicalName: "Stripe",
+    aliases: ["stripe", "stripe, llc", "stripe inc"],
+    approvedDomains: ["stripe.com"],
+    affiliatedAuthDomains: [],
+  },
+  venmo: {
+    canonicalName: "Venmo",
+    aliases: ["venmo", "venmo (service of paypal, inc.)"],
+    approvedDomains: ["venmo.com"],
+    affiliatedAuthDomains: [],
+  },
+  square: {
+    canonicalName: "Square",
+    aliases: ["square", "squareup", "block, inc.", "block"],
+    approvedDomains: ["squareup.com", "square.com", "block.xyz"],
+    affiliatedAuthDomains: [],
+  },
+  wise: {
+    canonicalName: "Wise",
+    aliases: ["wise", "transferwise", "wise payments"],
+    approvedDomains: ["wise.com"],
+    affiliatedAuthDomains: [],
+  },
+  gitlab: {
+    canonicalName: "GitLab",
+    aliases: ["gitlab", "gitlab inc"],
+    approvedDomains: ["gitlab.com", "about.gitlab.com"],
+    affiliatedAuthDomains: [],
+  },
+  docker: {
+    canonicalName: "Docker",
+    aliases: ["docker", "docker inc"],
+    approvedDomains: ["docker.com", "hub.docker.com"],
+    affiliatedAuthDomains: [],
+  },
+  npm: {
+    canonicalName: "npm",
+    aliases: ["npm", "npmjs", "npm inc"],
+    approvedDomains: ["npmjs.com"],
+    affiliatedAuthDomains: [],
+  },
+  binance: {
+    canonicalName: "Binance",
+    aliases: ["binance", "binance exchange", "binance holdings"],
+    approvedDomains: ["binance.com", "binance.us"],
+    affiliatedAuthDomains: [],
+  },
+  coinbase: {
+    canonicalName: "Coinbase",
+    aliases: ["coinbase", "coinbase inc", "coinbase global"],
+    approvedDomains: ["coinbase.com"],
+    affiliatedAuthDomains: [],
+  },
+  kraken: {
+    canonicalName: "Kraken",
+    aliases: ["kraken", "payward", "payward, inc."],
+    approvedDomains: ["kraken.com"],
+    affiliatedAuthDomains: [],
+  },
+  blockchain: {
+    canonicalName: "Blockchain.com",
+    aliases: ["blockchain", "blockchain.com", "blockchain.com, inc."],
+    approvedDomains: ["blockchain.com"],
+    affiliatedAuthDomains: [],
+  },
+  discord: {
+    canonicalName: "Discord",
+    aliases: ["discord", "discord inc"],
+    approvedDomains: ["discord.com", "discord.gg"],
+    affiliatedAuthDomains: [],
+  },
+  slack: {
+    canonicalName: "Slack",
+    aliases: ["slack", "slack technologies", "slack technologies, llc"],
+    approvedDomains: ["slack.com"],
+    affiliatedAuthDomains: [],
+  },
+  reddit: {
+    canonicalName: "Reddit",
+    aliases: ["reddit", "reddit inc"],
+    approvedDomains: ["reddit.com"],
+    affiliatedAuthDomains: [],
+  },
+  linkedin: {
+    canonicalName: "LinkedIn",
+    aliases: ["linkedin", "linkedin corporation"],
+    approvedDomains: ["linkedin.com"],
+    affiliatedAuthDomains: [],
+  },
+  x: {
+    canonicalName: "X (Twitter)",
+    aliases: ["x", "twitter", "x corp", "twitter inc"],
+    approvedDomains: ["x.com", "twitter.com", "t.co"],
+    affiliatedAuthDomains: [],
+  },
+  proton: {
+    canonicalName: "Proton",
+    aliases: ["proton", "proton ag", "protonmail", "proton mail"],
+    approvedDomains: ["proton.me", "protonmail.com"],
+    affiliatedAuthDomains: ["account.proton.me"],
+  },
+  dropbox: {
+    canonicalName: "Dropbox",
+    aliases: ["dropbox", "dropbox inc"],
+    approvedDomains: ["dropbox.com"],
+    affiliatedAuthDomains: [],
+  },
+  box: {
+    canonicalName: "Box",
+    aliases: ["box", "box inc", "box.com"],
+    approvedDomains: ["box.com"],
+    affiliatedAuthDomains: [],
+  },
+  ebay: {
+    canonicalName: "eBay",
+    aliases: ["ebay", "ebay inc"],
+    approvedDomains: ["ebay.com"],
+    affiliatedAuthDomains: [],
+  },
+  walmart: {
+    canonicalName: "Walmart",
+    aliases: ["walmart", "wal-mart", "walmart inc"],
+    approvedDomains: ["walmart.com"],
+    affiliatedAuthDomains: [],
+  },
+  etsy: {
+    canonicalName: "Etsy",
+    aliases: ["etsy", "etsy inc"],
+    approvedDomains: ["etsy.com"],
+    affiliatedAuthDomains: [],
+  },
+  usps: {
+    canonicalName: "US Postal Service",
+    aliases: ["usps", "united states postal service", "u.s. postal service"],
+    approvedDomains: ["usps.com"],
+    affiliatedAuthDomains: [],
+  },
+  irs: {
+    canonicalName: "Internal Revenue Service",
+    aliases: ["irs", "internal revenue service"],
+    approvedDomains: ["irs.gov"],
+    affiliatedAuthDomains: [],
+  },
+  cloudflare: {
+    canonicalName: "Cloudflare",
+    aliases: ["cloudflare", "cloudflare inc"],
+    approvedDomains: ["cloudflare.com"],
+    affiliatedAuthDomains: [],
+  },
+  openai: {
+    canonicalName: "OpenAI",
+    aliases: ["openai", "openai llc", "chatgpt"],
+    approvedDomains: ["openai.com", "chatgpt.com"],
+    affiliatedAuthDomains: ["auth0.openai.com"],
+  },
+  anthropic: {
+    canonicalName: "Anthropic",
+    aliases: ["anthropic", "anthropic pbc", "claude"],
+    approvedDomains: ["anthropic.com", "claude.ai"],
+    affiliatedAuthDomains: [],
+  },
   vercel: {
     canonicalName: "Vercel",
     aliases: ["vercel", "vercel inc"],
     approvedDomains: ["vercel.com"],
+    affiliatedAuthDomains: [],
+  },
+  bofa: {
+    canonicalName: "Bank of America",
+    aliases: ["bank of america", "bofa"],
+    approvedDomains: ["bankofamerica.com", "bofa.com"],
+    affiliatedAuthDomains: [],
+  },
+  metamask: {
+    canonicalName: "MetaMask",
+    aliases: ["metamask", "consensys", "metamask crypto wallet"],
+    approvedDomains: ["metamask.io"],
+    affiliatedAuthDomains: ["docs.metamask.io", "support.metamask.io"],
+  },
+  roblox: {
+    canonicalName: "Roblox",
+    aliases: ["roblox", "roblox corporation"],
+    approvedDomains: ["roblox.com"],
+    affiliatedAuthDomains: [],
+  },
+  xfinity: {
+    canonicalName: "Xfinity",
+    aliases: ["xfinity", "comcast"],
+    approvedDomains: ["xfinity.com", "comcast.com"],
+    affiliatedAuthDomains: [],
+  },
+  dpd: {
+    canonicalName: "DPD",
+    aliases: ["dpd", "mydpd", "dpd group"],
+    approvedDomains: ["dpd.com", "dpd.co.uk", "dpd.de", "dpdgroup.com"],
+    affiliatedAuthDomains: [],
+  },
+  dhl: {
+    canonicalName: "DHL",
+    aliases: ["dhl", "dhl express", "deutsche post dhl"],
+    approvedDomains: ["dhl.com", "dhl.de"],
+    affiliatedAuthDomains: [],
+  },
+  fedex: {
+    canonicalName: "FedEx",
+    aliases: ["fedex", "fedex corporation", "federal express"],
+    approvedDomains: ["fedex.com"],
+    affiliatedAuthDomains: [],
+  },
+  ups: {
+    canonicalName: "UPS",
+    aliases: ["ups", "united parcel service"],
+    approvedDomains: ["ups.com"],
+    affiliatedAuthDomains: [],
+  },
+  okta: {
+    canonicalName: "Okta",
+    aliases: ["okta", "okta inc"],
+    approvedDomains: ["okta.com"],
     affiliatedAuthDomains: [],
   },
 };
@@ -264,6 +492,165 @@ export function isDomainOrSubdomain(hostname: string, domainOrRoot: string): boo
 }
 
 /**
+ * Known multi-part public suffixes and standard TLDs for domain boundary evaluation.
+ */
+export const MULTI_PART_PUBLIC_SUFFIXES = new Set([
+  "co.uk", "org.uk", "gov.uk", "ac.uk", "me.uk", "net.uk",
+  "com.au", "net.au", "org.au", "gov.au", "edu.au",
+  "co.jp", "ne.jp", "or.jp", "go.jp", "ac.jp",
+  "co.in", "net.in", "org.in", "gov.in", "edu.in",
+  "com.br", "net.br", "org.br", "gov.br",
+  "com.mx", "org.mx", "gob.mx", "edu.mx",
+  "com.sg", "edu.sg", "gov.sg",
+  "co.za", "gov.za", "edu.za",
+  "com.et", "edu.et",
+  "com.es", "nom.es", "org.es",
+  "edu.bd", "gov.bd",
+  "pages.dev", "github.io", "gitlab.io", "vercel.app", "bolt.host",
+]);
+
+/**
+ * Extracts the registrable organizational domain (eTLD+1) from a hostname.
+ * Examples:
+ *   'about.gitlab.com' -> 'gitlab.com'
+ *   'www.blockchain.com' -> 'blockchain.com'
+ *   'secure.chase.com' -> 'chase.com'
+ *   'service.police.uk' -> 'police.uk'
+ */
+export function getRegistrableDomain(hostname: string): string {
+  if (!hostname || typeof hostname !== "string") return "";
+  const h = hostname.toLowerCase().trim().replace(/^\[|\]$/g, "");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return h; // IP literals
+
+  const parts = h.split(".");
+  if (parts.length <= 2) return h;
+
+  // Check 2-part TLDs (e.g. co.uk, com.au)
+  const lastTwo = parts.slice(-2).join(".");
+  if (MULTI_PART_PUBLIC_SUFFIXES.has(lastTwo)) {
+    if (parts.length >= 3) {
+      return parts.slice(-3).join(".");
+    }
+    return h;
+  }
+
+  return parts.slice(-2).join(".");
+}
+
+/**
+ * Determines whether two hostnames belong to the same registered organizational domain.
+ */
+export function isSameRegistrableDomain(hostA: string, hostB: string): boolean {
+  if (!hostA || !hostB) return false;
+  const regA = getRegistrableDomain(hostA);
+  const regB = getRegistrableDomain(hostB);
+  return regA !== "" && regA === regB;
+}
+
+/**
+ * High-value brand identifier tokens monitored for lookalike domain impersonation.
+ */
+export const HIGH_VALUE_BRAND_TOKENS: Record<string, string[]> = {
+  chase: ["chase"],
+  bofa: ["bofa", "bankofamerica"],
+  wellsfargo: ["wellsfargo"],
+  citi: ["citi", "citigroup"],
+  capitalone: ["capitalone"],
+  paypal: ["paypal"],
+  stripe: ["stripe"],
+  venmo: ["venmo"],
+  wise: ["wise"],
+  binance: ["binance"],
+  coinbase: ["coinbase"],
+  kraken: ["kraken"],
+  metamask: ["metamask", "metamaskwallet"],
+  blockchain: ["blockchain"],
+  google: ["google", "gmail"],
+  microsoft: ["microsoft", "outlook", "office365"],
+  apple: ["apple", "icloud"],
+  amazon: ["amazon"],
+  netflix: ["netflix"],
+  meta: ["facebook", "instagram", "whatsapp"],
+  roblox: ["roblox"],
+  xfinity: ["xfinity", "xfinlty"],
+  usps: ["usps"],
+  irs: ["irs"],
+  dpd: ["dpd", "mydpd"],
+  dhl: ["dhl"],
+  fedex: ["fedex"],
+  ups: ["ups"],
+  okta: ["okta"],
+};
+
+/**
+ * Checks whether an unaffiliated hostname embeds a high-value brand keyword as a subdomain or label.
+ * Enforces strict label and hyphen boundaries to avoid false matches on standard English vocabulary.
+ */
+export function detectLookalikeBrandInHostname(
+  hostname: string,
+  approvedDomains: string[] = []
+): { isLookalike: boolean; brandName?: string; detail?: string } {
+  if (!hostname || typeof hostname !== "string") return { isLookalike: false };
+  const h = hostname.toLowerCase().trim().replace(/^\[|\]$/g, "");
+
+  // Never flag reserved example domains, hosted payment destinations, or numeric IPs
+  if (isReservedExampleDomain(h) || isHostedPaymentDestination(h) || /^\d{1,3}(\.\d{1,3}){3}$/.test(h)) {
+    return { isLookalike: false };
+  }
+
+  // If already approved domain for this brand or identical registrable domain
+  for (const approved of approvedDomains) {
+    if (isDomainOrSubdomain(h, approved) || isSameRegistrableDomain(h, approved)) {
+      return { isLookalike: false };
+    }
+  }
+
+  // Also check all BRAND_DOMAIN_REGISTRY approved domains
+  for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+    if (entry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d))) {
+      return { isLookalike: false };
+    }
+  }
+
+  const labels = h.split(".");
+  // Don't check the public suffix / TLD part
+  const checkLabels = labels.length > 2 ? labels.slice(0, -1) : labels.slice(0, 1);
+
+  for (const [canonicalBrandKey, tokens] of Object.entries(HIGH_VALUE_BRAND_TOKENS)) {
+    const regEntry = BRAND_DOMAIN_REGISTRY[canonicalBrandKey];
+    if (regEntry && regEntry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d))) {
+      continue;
+    }
+
+    for (const label of checkLabels) {
+      const subParts = label.split(/[-_.]/);
+      for (const part of subParts) {
+        const cleaned = part.replace(/^\d+|\d+$/g, "");
+        if (cleaned.length === 0) continue;
+
+        for (const token of tokens) {
+          const isExact = cleaned === token;
+          const isCompound =
+            (cleaned.startsWith(token) || cleaned.endsWith(token)) &&
+            cleaned.length >= token.length + 3 &&
+            !["purchase", "metastudy", "metastable"].includes(cleaned);
+
+          if (isExact || isCompound) {
+            return {
+              isLookalike: true,
+              brandName: regEntry?.canonicalName || canonicalBrandKey.toUpperCase(),
+              detail: `The destination domain (${h}) contains a brand identifier ("${token}") associated with ${regEntry?.canonicalName || canonicalBrandKey.toUpperCase()}, but is not an authorized corporate domain.`,
+            };
+          }
+        }
+      }
+    }
+  }
+
+  return { isLookalike: false };
+}
+
+/**
  * Extracts a concise canonical brand name from claimed organization text.
  * Strips explanatory suffixes, parentheticals, and corporate entity abbreviations.
  */
@@ -298,6 +685,20 @@ export interface BrandAffiliationResult {
 /**
  * Evaluates claimed organization against the destination hostname using the structured registry.
  */
+export function matchesBrandAlias(text: string, alias: string): boolean {
+  if (!text || !alias) return false;
+  const t = text.toLowerCase().trim();
+  const a = alias.toLowerCase().trim();
+  if (t === a) return true;
+  if (t.startsWith(a)) {
+    const nextChar = t.charAt(a.length);
+    if (!nextChar || /[^a-z0-9]/i.test(nextChar)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function evaluateBrandAffiliation(
   claimedOrg: string | undefined,
   hostname: string
@@ -364,8 +765,8 @@ export function evaluateBrandAffiliation(
             (alias) =>
               alias === canonicalLower ||
               alias === rawOrgLower ||
-              rawOrgLower.startsWith(alias) ||
-              canonicalLower.startsWith(alias)
+              matchesBrandAlias(rawOrgLower, alias) ||
+              matchesBrandAlias(canonicalLower, alias)
           )
         ) {
           matchedEntry = entry;
@@ -423,8 +824,8 @@ export function evaluateBrandAffiliation(
         (alias) =>
           alias === canonicalLower ||
           alias === rawOrgLower ||
-          rawOrgLower.startsWith(alias) ||
-          canonicalLower.startsWith(alias)
+          matchesBrandAlias(rawOrgLower, alias) ||
+          matchesBrandAlias(canonicalLower, alias)
       )
     ) {
       matchedEntry = entry;
@@ -586,8 +987,106 @@ export function isDeceptiveUrgency(text: string): boolean {
 }
 
 /**
- * Detects whether a text describes an ordinary app-store link, mobile app download link,
- * or informational link rather than an active browser prompt or automatic file execution.
+ * Detects whether an observed text describes ordinary commercial terms, rate-locks,
+ * money-back guarantees, or standard marketing offers.
+ * These are commercial assurances, NOT deceptive psychological urgency.
+ */
+export function isBenignCommercialTermOrGuarantee(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+
+  const isCommercialGuarantee =
+    /guaranteed\s+(for\s+)?\d+\s*(h|hr|hours?|m|min|minutes?|d|days?)/i.test(t) ||
+    /exchange\s+rate\s+(guarantee|lock)/i.test(t) ||
+    /rate\s+guaranteed/i.test(t) ||
+    /price\s+(match\s+)?guarantee/i.test(t) ||
+    /money[\s-]back\s+guarantee/i.test(t) ||
+    /(sale|discount|deal|offer)\s+(ends|expires)\s+(in|soon)/i.test(t) ||
+    /limited[\s-]time\s+(offer|deal|discount|promotion)/i.test(t) ||
+    /holiday\s+(special|sale|discount|savings)/i.test(t) ||
+    /free\s+shipping\s+on\s+orders/i.test(t);
+
+  if (!isCommercialGuarantee) return false;
+
+  // Must not involve coercive threats, account suspension, or credential requests
+  const hasCoercion =
+    /account\s+suspension|suspend(ed)?\s+within|immediate(ly)?\s+verify|threat\s+of|unauthorized\s+transaction|compromise|stolen|unauthorized\s+access|password|credential/i.test(t);
+
+  return !hasCoercion;
+}
+
+/**
+ * Detects whether an observed text describes an ordinary regulatory compliance notice,
+ * cookie consent banner, or regional/geo-detection notification.
+ */
+export function isRegulatoryOrRegionalNotice(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const t = text.trim().toLowerCase();
+
+  return (
+    /geo[\s-]detection\s+redirect/i.test(t) ||
+    /switch\s+to\s+[a-z0-9\.\-]+\s*\(\s*separate\s+entity\s*\)/i.test(t) ||
+    /regional\s+(notice|switcher|redirect|portal)/i.test(t) ||
+    /select\s+your\s+(country|region|language)/i.test(t) ||
+    /cookie\s+(preferences?|consent|banner|policy)/i.test(t) ||
+    /gdpr\s+notice/i.test(t)
+  );
+}
+
+/**
+ * Detects whether an investigation destination was blocked by an automated anti-bot
+ * challenge, CDN security perimeter, or network-level access control.
+ * These are INCOMPLETE INSPECTION conditions that mandate an Unknown verdict,
+ * never a suspicious phishing finding.
+ */
+export function isAccessBlockedOrAntiBotChallenge(
+  warningOrText: string,
+  pageTitle?: string,
+  visiblePurpose?: string
+): boolean {
+  const combined = `${warningOrText || ""} ${pageTitle || ""} ${visiblePurpose || ""}`.toLowerCase();
+
+  return (
+    /access\s+blocked\s+by\s+network\s+security/i.test(combined) ||
+    /blocked\s+-\s+reddit/i.test(combined) ||
+    /verify\s+you\s+are\s+human/i.test(combined) ||
+    /cloudflare\s+(human\s+verification|turnstile|ray\s+id|challenge)/i.test(combined) ||
+    /attention\s+required!\s*\|\s*cloudflare/i.test(combined) ||
+    /just\s+a\s+moment\.\.\./i.test(combined) ||
+    /ddos[\s-]guard/i.test(combined) ||
+    /403\s+forbidden\s*-\s*access\s+denied/i.test(combined) ||
+    /request\s+blocked\s+by\s+security\s+rules/i.test(combined) ||
+    /bot\s+detection\s+(challenge|interstitial|perimeter)/i.test(combined)
+  );
+}
+
+/**
+ * Detects whether an observed destination is dormant, suspended, expired, or non-functional.
+ * Inactive pages must not be declared Low observed risk.
+ */
+export function isDormantOrSuspendedPage(
+  pageTitle?: string,
+  visiblePurpose?: string,
+  overallObservation?: string
+): boolean {
+  const combined = `${pageTitle || ""} ${visiblePurpose || ""} ${overallObservation || ""}`.toLowerCase();
+
+  return (
+    /сайт\s+временно\s+недоступен/i.test(combined) ||
+    /site\s+temporarily\s+unavailable/i.test(combined) ||
+    /account\s+suspended/i.test(combined) ||
+    /domain\s+(parked|expired|parking)/i.test(combined) ||
+    /this\s+domain\s+has\s+expired/i.test(combined) ||
+    /suspended\s+page/i.test(combined) ||
+    /hosting\s+subscription\s+expired/i.test(combined) ||
+    /default\s+web\s+site\s+page/i.test(combined) ||
+    /server\s+default\s+page/i.test(combined)
+  );
+}
+
+/**
+ * Detects whether a text describes an ordinary app-store link, mobile/desktop app download link,
+ * or informational software download button rather than an active browser prompt or automatic file execution.
  */
 export function isAppStoreOrInformationalDownload(text: string): boolean {
   if (!text || typeof text !== "string") return false;
@@ -596,8 +1095,13 @@ export function isAppStoreOrInformationalDownload(text: string): boolean {
     /app\s*store|google\s*play|play\s*store|f-droid|microsoft\s*store/i.test(t) ||
     /download\s+(the\s+)?(mobile\s+)?app/i.test(t) ||
     /links?\s+to\s+(download|app)/i.test(t) ||
-    /available\s+on\s+(ios|android|google\s*play|app\s*store)/i.test(t) ||
-    /optional\s+mobile\s+app/i.test(t)
+    /available\s+on\s+(ios|android|google\s*play|app\s*store|windows|mac|linux)/i.test(t) ||
+    /download\s+(for\s+)?(windows|mac|macos|linux|ios|android|desktop)/i.test(t) ||
+    /download\s+(discord|slack|chrome|firefox|zoom|teams|app|client)/i.test(t) ||
+    /desktop\s+(client|app)\s+download/i.test(t) ||
+    /optional\s+(mobile|desktop)\s+app/i.test(t) ||
+    /button\s+to\s+download/i.test(t) ||
+    /standard\s+download\s+link/i.test(t)
   );
 }
 
@@ -607,12 +1111,22 @@ export function isAppStoreOrInformationalDownload(text: string): boolean {
 export function isActiveDownloadOrPermissionPrompt(text: string): boolean {
   if (!text || typeof text !== "string") return false;
   const t = text.trim().toLowerCase();
+
+  // Filter out negative assertions ("no automatic download", "not an automatic download")
+  // and agent inspection logs ("checked for automatic download")
+  const cleaned = t
+    .replace(/(?:no|not\s+an?|without|neither)\s+automatic(?:ally)?\s+downloads?/gi, "")
+    .replace(/checked\s+for\s+automatic\s+downloads?/gi, "");
+
   return (
-    /automatic\s+download/i.test(t) ||
-    /prompt(ed|s)?\s+(to\s+)?download\s+(executable|\.exe|\.apk|\.zip|\.dmg|\.bat|\.sh)/i.test(t) ||
-    /direct\s+download\s+prompt/i.test(t) ||
-    /permission\s+(dialog|prompt|request(ed)?)\s+(for\s+)?(camera|microphone|notification|geolocation|location)/i.test(t) ||
-    /browser\s+permission\s+requested/i.test(t)
+    /(?:initiates?|triggers?|prompts?|started|began)\s+(?:an?\s+)?automatic(?:ally)?\s+download/i.test(cleaned) ||
+    /automatic(?:ally)?\s+(?:downloaded|downloading|downloads)\s+(?:a\s+file|executable|payload|\.exe|\.zip|\.dmg)/i.test(cleaned) ||
+    /download\s+started\s+(?:without\s+user|automatically)/i.test(cleaned) ||
+    /prompt(?:ed|s)?\s+(?:to\s+)?(?:save|run|execute)\s+(?:executable|\.exe|\.apk|\.zip|\.dmg|\.bat|\.sh|\.vbs|\.ps1)/i.test(cleaned) ||
+    /direct\s+download\s+prompt\s+without\s+interaction/i.test(cleaned) ||
+    /permission\s+(?:dialog|prompt|request(?:ed)?)\s+(?:for\s+)?(?:camera|microphone|notification|geolocation|location)/i.test(cleaned) ||
+    /browser\s+permission\s+requested/i.test(cleaned) ||
+    /drive-by\s+download/i.test(cleaned)
   );
 }
 
@@ -944,10 +1458,18 @@ export function assessInvestigation(params: {
 
   if (destinationChanged && finalHost) {
     const isAffiliated = isAffiliatedRedirection(submittedHost, finalHost);
+    const isSameDomain = isSameRegistrableDomain(submittedHost, finalHost);
     if (isAffiliated) {
       evidenceItems.push({
         label: "Affiliated Redirection Observed",
         detail: `The destination redirected to an affiliated authentication or corporate domain (${finalHost}).`,
+        kind: "neutral",
+        provenance: "redirect_analysis",
+      });
+    } else if (isSameDomain) {
+      evidenceItems.push({
+        label: "Intra-Domain Redirection Observed",
+        detail: `The destination redirected within the same organizational domain (${finalHost}).`,
         kind: "neutral",
         provenance: "redirect_analysis",
       });
@@ -969,6 +1491,19 @@ export function assessInvestigation(params: {
       detail: `The destination redirected to an internal, private, or metadata network address (${finalHost}): ${unsafeRedirectReason}`,
       kind: "warning",
       provenance: "redirect_analysis",
+    };
+    evidenceItems.push(item);
+    warningSigns.push(item.label);
+  }
+
+  // Lookalike brand domain analysis in submitted hostname
+  const lookalikeCheck = detectLookalikeBrandInHostname(submittedHost);
+  if (lookalikeCheck.isLookalike) {
+    const item: Finding = {
+      label: "Deceptive Lookalike Brand Identifier in Domain Name",
+      detail: lookalikeCheck.detail || `The destination domain (${submittedHost}) appears to imitate ${lookalikeCheck.brandName}.`,
+      kind: "warning",
+      provenance: "policy_rule",
     };
     evidenceItems.push(item);
     warningSigns.push(item.label);
@@ -1160,6 +1695,39 @@ export function assessInvestigation(params: {
       });
       continue;
     }
+    if (isBenignCommercialTermOrGuarantee(rawW)) {
+      // Route benign commercial rate locks, guarantees, or standard marketing offers to neutral findings
+      evidenceItems.push({
+        label: "Commercial Term / Guarantee Observed",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
+    if (isRegulatoryOrRegionalNotice(rawW)) {
+      // Route regulatory geo-ip notices and cookie preference modals to neutral findings
+      evidenceItems.push({
+        label: "Regional / Compliance Notice Observed",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
+    if (isAccessBlockedOrAntiBotChallenge(rawW, observedFacts.pageTitle, observedFacts.visiblePurpose)) {
+      // Route anti-bot challenges and network blocking interstitials to limitations rather than threats
+      if (!missingEvidence.includes(rawW)) {
+        missingEvidence.push(rawW);
+      }
+      evidenceItems.push({
+        label: "Access Blocked / Anti-Bot Challenge",
+        detail: rawW,
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      continue;
+    }
     if (isAppStoreOrInformationalDownload(rawW) && !isActiveDownloadOrPermissionPrompt(rawW)) {
       // Route informational app-store links to neutral findings
       evidenceItems.push({
@@ -1239,6 +1807,26 @@ export function assessInvestigation(params: {
   const confirmedHighSignal = HIGH_RISK_SIGNALS.some((sig) => allWarningText.includes(sig));
   const hasSuspiciousSignal = SUSPICIOUS_SIGNALS.some((sig) => allWarningText.includes(sig));
 
+  const hasAntiBotChallenge = isAccessBlockedOrAntiBotChallenge(
+    warningSigns.join(" ") + " " + rawText,
+    observedFacts.pageTitle,
+    observedFacts.visiblePurpose
+  );
+  const isDormantPage = isDormantOrSuspendedPage(
+    observedFacts.pageTitle,
+    observedFacts.visiblePurpose,
+    structured?.overall_observation
+  );
+
+  const hasIndependentUrlThreat =
+    hasUnsafeRedirect ||
+    confirmedHighSignal ||
+    isNumericIp ||
+    hasPunycode ||
+    warningSigns.some((w) =>
+      /lookalike|punycode|numeric\s+ip|unencrypted\s+http|domain\s+discrepancy/i.test(w)
+    );
+
   // Policy Rule 1: Investigation Failure or Inconclusive -> MANDATORY UNKNOWN
   if (!tinyFishResult.success || tinyFishResult.goalFailed) {
     riskOutcome = "Unknown";
@@ -1248,6 +1836,28 @@ export function assessInvestigation(params: {
       : "The investigation ended without sufficient validated evidence. AheadGuard will never guess or declare an unverified site safe.";
     recommendedAction = "Do not proceed until you verify this destination through an independent, trusted channel.";
     missingEvidence.push("Complete live page inspection could not be finished.");
+  }
+  // Policy Rule 1b: Access Blocked by Anti-Bot Perimeter or Incomplete Page Inspection -> MANDATORY UNKNOWN
+  // If the destination URL itself exhibits definitive threat markers (e.g. lookalike brand, unencrypted HTTP, IP host),
+  // those threats take precedence over the anti-bot interstitial.
+  else if (hasAntiBotChallenge && !hasIndependentUrlThreat) {
+    riskOutcome = "Unknown";
+    threatLikelihood = "Uncertain";
+    outcomeReason =
+      "The destination page could not be inspected because access was blocked by an automated anti-bot security challenge or network perimeter. Missing evidence cannot be treated as safe.";
+    recommendedAction =
+      "The destination could not be inspected due to automated security barriers. Visit only if you independently know and trust this domain.";
+    missingEvidence.push("Complete live page inspection could not be completed (access blocked by anti-bot challenge).");
+  }
+  // Policy Rule 1c: Dormant, Parked, or Suspended Placeholder Destination -> MANDATORY UNKNOWN
+  else if (isDormantPage) {
+    riskOutcome = "Unknown";
+    threatLikelihood = "Uncertain";
+    outcomeReason =
+      "The destination page appears dormant, suspended, or temporarily unavailable. Inactive placeholder pages cannot be verified as safe.";
+    recommendedAction =
+      "The destination service is currently inactive or suspended. Do not attempt to submit information until normal service is verified.";
+    missingEvidence.push("Active operating service could not be verified (site is dormant/suspended).");
   }
   // Policy Rule 2: Confirmed High Risk Threats or SSRF Redirect Attempt
   else if (confirmedHighSignal || hasUnsafeRedirect || (hasPromptInjection && observedFacts.credentialOrPaymentRequest)) {
@@ -1280,12 +1890,16 @@ export function assessInvestigation(params: {
     !isHttp &&
     !hasPunycode &&
     !isNumericIp &&
-    (!destinationChanged || isAffiliatedRedirection(submittedHost, finalHost || submittedHost)) &&
+    (!destinationChanged ||
+      isAffiliatedRedirection(submittedHost, finalHost || submittedHost) ||
+      isSameRegistrableDomain(submittedHost, finalHost || submittedHost)) &&
     !observedFacts.downloadOrPermissionRequest &&
     (!observedFacts.credentialOrPaymentRequest || brandAffiliation.isOfficialDomain) &&
     (!observedFacts.hasPasswordField || brandAffiliation.isOfficialDomain) &&
     (!observedFacts.hasPaymentField || brandAffiliation.isOfficialDomain) &&
-    !isHostedPayment
+    !isHostedPayment &&
+    !hasAntiBotChallenge &&
+    !isDormantPage
   ) {
     riskOutcome = "Low observed risk";
     threatLikelihood = "Low";

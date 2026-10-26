@@ -1678,3 +1678,510 @@ describe("Vercel Platform Service Classification & AheadGuard Self-Investigation
   });
 });
 
+describe("Benchmark Overhaul: False-Positive Elimination, Phishing Detection & Policy Hardening", () => {
+  it("Scenario 1 (Capital One): Authentic sign-in form on verified official domain yields Low Observed Risk", () => {
+    const url = new URL("https://www.capitalone.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Capital One homepage with credit cards and inline account login form.",
+      structuredResult: {
+        page_title: "Capital One | Credit Cards, Checking, Savings & Auto Loans",
+        observed_final_url: "https://www.capitalone.com/",
+        claimed_organization: "Capital One",
+        visible_purpose: "Capital One homepage providing financial products and online banking sign-in.",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official corporate domain capitalone.com", "Active HTTPS", "Standard banking layout"],
+        checks_performed: ["Validated SSL", "Checked forms", "Verified official domain"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Authentic Sign-in Form Observed")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Credential or Payment Input Form Observed")).toBe(false);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("High"); // High consequence because real credentials will be submitted
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Scenario 1 Counterexample: Impersonated login form on unapproved lookalike domain yields Suspicious/High Risk", () => {
+    const url = new URL("https://capitalone-login-portal.net/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Phishing site imitating Capital One login form.",
+      structuredResult: {
+        page_title: "Capital One Sign In",
+        observed_final_url: "https://capitalone-login-portal.net/",
+        claimed_organization: "Capital One",
+        visible_purpose: "Sign in to your Capital One account",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Unapproved domain asking for banking credentials"],
+        positive_signals: ["HTTPS"],
+        checks_performed: ["Domain check"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns.length).toBeGreaterThan(0);
+    expect(report.riskOutcome).toMatch(/^(Suspicious|High risk)$/);
+    expect(report.actionPreview.consequenceIfProceed).toContain("masquerading as Capital One");
+  });
+
+  it("Scenario 2 (Wise): Legitimate currency conversion rate guarantee does not trigger false urgency warning", () => {
+    const url = new URL("https://wise.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Wise international money transfer homepage with live conversion widget.",
+      structuredResult: {
+        page_title: "Wise: The international account | Money without borders | Wise United States",
+        observed_final_url: "https://wise.com/",
+        claimed_organization: "Wise",
+        visible_purpose: "International money transfer service and multi-currency account.",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ['Exchange rate guarantee with urgency language ("Guaranteed for 8h" on currency conversion display)'],
+        positive_signals: ["Official wise.com domain", "HTTPS active", "Financial service transparency"],
+        checks_performed: ["Checked currency converter", "Inspected domain"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Commercial Term / Guarantee Observed")).toBe(true);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+  });
+
+  it("Scenario 2 Counterexample: Coercive account suspension threat triggers genuine urgency warning", () => {
+    const url = new URL("https://wise-unverified-alert.net/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Fake urgency claiming account suspension within 24 hours.",
+      structuredResult: {
+        page_title: "Wise - Security Notice",
+        observed_final_url: "https://wise-unverified-alert.net/",
+        claimed_organization: "Wise",
+        visible_purpose: "Account verification warning",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Account will be suspended within 24 hours unless you verify identity immediately"],
+        positive_signals: [],
+        checks_performed: [],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns.some((w) => w.includes("suspended"))).toBe(true);
+    expect(report.riskOutcome).toBe("Suspicious");
+  });
+
+  it("Scenario 3 (Reddit & Anti-Bot): Blocked or access-denied page mandates Unknown verdict, never Suspicious", () => {
+    const url = new URL("https://www.reddit.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 2,
+      rawAgentText: "Target returned network security block page.",
+      structuredResult: {
+        page_title: "Blocked - Reddit (error page, no standard title)",
+        observed_final_url: "https://www.reddit.com/",
+        claimed_organization: undefined,
+        visible_purpose: "Access blocked by network security — the main page content was not rendered, preventing full inspection of the site",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Access blocked by network security — the main page content was not rendered, preventing full inspection of the site"],
+        positive_signals: [],
+        checks_performed: ["Connection attempted"],
+        unknowns: ["Page body could not be rendered due to bot protection"],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toContain("access was blocked by an automated anti-bot security challenge");
+    expect(report.warningSigns).toHaveLength(0); // Not counted as a confirmed website threat
+  });
+
+  it("Scenario 3 Counterexample: Clean accessible page on reddit.com yields Low Observed Risk", () => {
+    const url = new URL("https://www.reddit.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Public community discussion portal.",
+      structuredResult: {
+        page_title: "Reddit - Dive into anything",
+        observed_final_url: "https://www.reddit.com/",
+        claimed_organization: "Reddit",
+        visible_purpose: "Social news aggregation and community discussions.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official reddit.com domain", "HTTPS active", "Recognized brand"],
+        checks_performed: ["Inspected public feed"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+  });
+
+  it("Scenario 4 (Discord): Desktop software download CTA on official website does not trigger false download threat", () => {
+    const url = new URL("https://discord.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Discord marketing page with Download for Windows button.",
+      structuredResult: {
+        page_title: "Discord - Group Chat That's All Fun & Games",
+        observed_final_url: "https://discord.com/",
+        claimed_organization: "Discord",
+        visible_purpose: "VoIP and instant messaging communication platform.",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: true,
+        app_store_or_informational_link_only: false,
+        observed_warning_signs: ["Page contains Download for Windows button for desktop client"],
+        positive_signals: ["Official discord.com domain", "HTTPS active"],
+        checks_performed: ["Inspected landing page"],
+        unknowns: [],
+        overall_observation: "Standard marketing page offering links to download Discord for Windows and mobile apps.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.observedFacts.downloadOrPermissionRequest).toBe(false); // Normalized away from active prompt
+  });
+
+  it("Scenario 4 Counterexample: Active unprompted automatic executable download triggers Suspicious warning", () => {
+    const url = new URL("https://unverified-freeware-host.net/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Automatic download started without user interaction delivering setup.exe.",
+      structuredResult: {
+        page_title: "Free Tools",
+        observed_final_url: "https://unverified-freeware-host.net/",
+        claimed_organization: undefined,
+        visible_purpose: "Utility page",
+        credential_or_payment_request: false,
+        download_or_permission_request: true,
+        observed_warning_signs: ["Automatic download initiated: prompt to download executable setup.exe"],
+        positive_signals: [],
+        checks_performed: [],
+        unknowns: [],
+        overall_observation: "An automatic download prompt for setup.exe was triggered immediately on page load.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns.some((w) => w.includes("Download") || w.includes("executable"))).toBe(true);
+    expect(report.riskOutcome).toBe("Suspicious");
+  });
+
+  it("Scenario 5 (GitLab): Official subdomain redirection (gitlab.com -> about.gitlab.com) is neutral, not a host mismatch", () => {
+    const url = new URL("https://gitlab.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Redirected from gitlab.com to about.gitlab.com.",
+      structuredResult: {
+        page_title: "GitLab - Speed with control for agentic software engineering",
+        observed_final_url: "https://about.gitlab.com/",
+        claimed_organization: "GitLab",
+        visible_purpose: "DevOps and software engineering platform.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official domain gitlab.com", "HTTPS active"],
+        checks_performed: ["Followed redirect to about.gitlab.com"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Intra-Domain Redirection Observed" || f.label === "Affiliated Redirection Observed")).toBe(true);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 5 Counterexample: Redirection to an external unaffiliated domain triggers Destination Redirect Host Mismatch", () => {
+    const url = new URL("https://gitlab.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Redirected from gitlab.com to an unrelated destination.",
+      structuredResult: {
+        page_title: "External Portal",
+        observed_final_url: "https://fake-gitlab-mirror.ru/",
+        claimed_organization: "GitLab",
+        visible_purpose: "Login",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [],
+        checks_performed: ["Followed redirect"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toContain("Destination Redirect Host Mismatch");
+    expect(report.riskOutcome).toBe("Suspicious");
+  });
+
+  it("Scenario 6 (Blockchain.com): Subdomain canonicalization (blockchain.com -> www.blockchain.com) is neutral", () => {
+    const url = new URL("https://blockchain.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Blockchain.com crypto asset infrastructure homepage.",
+      structuredResult: {
+        page_title: "Digital Asset Infrastructure & Crypto Platform | Blockchain",
+        observed_final_url: "https://www.blockchain.com/",
+        claimed_organization: "Blockchain.com",
+        visible_purpose: "Cryptocurrency wallet and institutional asset platform.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Official blockchain.com domain", "HTTPS active"],
+        checks_performed: ["Validated SSL", "Followed www redirect"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 7 (Binance): Regional geo-IP redirect modal is treated as neutral compliance notice, not a threat", () => {
+    const url = new URL("https://www.binance.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Binance crypto exchange homepage with US regional switcher popup.",
+      structuredResult: {
+        page_title: "Binance Crypto Exchange: Buy, Sell Bitcoin, Ethereum, Stocks & More",
+        observed_final_url: "https://www.binance.com/en",
+        claimed_organization: "Binance",
+        visible_purpose: "Cryptocurrency trading exchange.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["US user geo-detection redirect popup suggesting users switch to Binance.US (separate entity) rather than proceeding on main binance.com"],
+        positive_signals: ["Official binance.com domain", "HTTPS active"],
+        checks_performed: ["Checked compliance modal"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Regional / Compliance Notice Observed")).toBe(true);
+    expect(report.riskOutcome).toBe("Low observed risk");
+  });
+
+  it("Scenario 8 (Multi-Step Phish): Unaffiliated domain embedding brand token triggers Lookalike warning even on multi-step page", () => {
+    const url = new URL("https://mydpd.nnaqo.help/track-ch");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Parcel tracking page imitating DPD on .help domain.",
+      structuredResult: {
+        page_title: "DPD Parcel Tracking Portal",
+        observed_final_url: "https://mydpd.nnaqo.help/track-ch",
+        claimed_organization: "DPD",
+        visible_purpose: "Parcel tracking status updates",
+        credential_or_payment_request: false, // Initial page does not render payment inputs yet
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS connection active"],
+        checks_performed: ["Inspected tracking timeline"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.warningSigns.some((w) => w.includes("Lookalike"))).toBe(true);
+    expect(report.riskOutcome).toBe("Suspicious");
+  });
+
+  it("Scenario 9 (Dormant / Suspended Page): Inactive hosting placeholder yields Unknown, never Low Observed Risk", () => {
+    const url = new URL("https://vf4933.craftum.io/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 2,
+      rawAgentText: "Site temporarily unavailable due to expired subscription.",
+      structuredResult: {
+        page_title: "Сайт временно недоступен (Site temporarily unavailable)",
+        observed_final_url: "https://vf4933.craftum.io/",
+        claimed_organization: "Craftum",
+        visible_purpose: "Placeholder/error page indicating the target website is temporarily unavailable, likely due to an expired subscription on the Craftum website builder platform.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS active"],
+        checks_performed: ["Checked status"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toContain("dormant, suspended, or temporarily unavailable");
+  });
+
+  it("Scenario 10 (Cloudflare CAPTCHA): Interstitial Turnstile gate mandates Unknown verdict, never Low Observed Risk", () => {
+    const url = new URL("https://mmdancr.sbs/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 2,
+      rawAgentText: "Cloudflare Turnstile verification interstitial.",
+      structuredResult: {
+        page_title: "Verify you are human",
+        observed_final_url: "https://mmdancr.sbs/",
+        claimed_organization: undefined,
+        visible_purpose: "The page is a Cloudflare human verification challenge. Cloudflare is a third-party security/CDN provider serving this page as an intermediary.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS active"],
+        checks_performed: ["Stopped at interstitial"],
+        unknowns: ["Underlying destination cannot be inspected without human interaction"],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toContain("access was blocked by an automated anti-bot security challenge");
+  });
+
+  it("Scenario 11 (Discord Marketing Download Negation): Standard desktop client links do not trigger active download warnings", () => {
+    const url = new URL("https://discord.com/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "The only interaction prompting observed is a download button (standard navigation link to download page, not an automatic file download).",
+      structuredResult: {
+        page_title: "Discord - Group Chat That's All Fun & Games",
+        observed_final_url: "https://discord.com/",
+        claimed_organization: "Discord",
+        visible_purpose: "Communication platform. It encourages users to download the application or open Discord in a browser.",
+        credential_or_payment_request: false,
+        download_or_permission_request: true,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS connection", "Official domain: discord.com"],
+        checks_performed: ["Checked for automatic download initiations or permission dialogs"],
+        unknowns: ["SSL certificate details not programmatically inspected"],
+        overall_observation: "The only interaction prompting observed is a download button (standard navigation link to download page, not an automatic file download).",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.warningSigns).toEqual([]);
+    expect(report.evidenceItems.some((e) => e.label === "Download or Permission Prompt Observed")).toBe(false);
+  });
+
+  it("Scenario 12 (MetaMask Official Domain Recognition): metamask.io is recognized as an official approved domain and not a lookalike", () => {
+    const url = new URL("https://metamask.io/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Official MetaMask Crypto Wallet page.",
+      structuredResult: {
+        page_title: "MetaMask Crypto Wallet. Buy and Sell Bitcoin, Ethereum, Solana",
+        observed_final_url: "https://metamask.io/",
+        claimed_organization: "Consensys Software Inc.",
+        visible_purpose: "Self-custodial cryptocurrency wallet application.",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Uses HTTPS", "Official domain: metamask.io"],
+        checks_performed: ["Visited URL", "Verified HTTPS"],
+        unknowns: [],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.warningSigns).toEqual([]);
+    expect(report.evidenceItems.some((e) => e.label === "Deceptive Lookalike Brand Identifier in Domain Name")).toBe(false);
+  });
+
+  it("Scenario 13 (Phishing Behind Cloudflare Interstitial): Lookalike threat indicators take precedence over anti-bot interstitial", () => {
+    const url = new URL("http://000000000a0uutlook.weebly.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Cloudflare challenge page for deceptive outlook subdomain.",
+      structuredResult: {
+        page_title: "Just a moment... (Cloudflare security challenge)",
+        observed_final_url: "https://000000000a0uutlook.weebly.com/",
+        claimed_organization: undefined,
+        visible_purpose: "Cloudflare verification interstitial",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [
+          "lookalike domain: the URL '000000000a0uutlook.weebly.com' appears to intentionally mimic 'outlook.com'",
+        ],
+        positive_signals: [],
+        checks_performed: ["Observed hostname"],
+        unknowns: ["actual page content is inaccessible due to Cloudflare challenge"],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    // URL threat takes precedence over Cloudflare interstitial
+    expect(report.riskOutcome).toBe("Suspicious");
+    expect(report.warningSigns.length).toBeGreaterThan(0);
+    expect(report.warningSigns).toContain("Unencrypted HTTP Connection");
+  });
+});
+
