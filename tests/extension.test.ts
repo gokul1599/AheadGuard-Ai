@@ -309,7 +309,7 @@ describe("AheadGuard Chrome Extension Test Suite (Section 11: Tests 1 - 20)", ()
   });
 
   // Test 20: Production build and extension packaging
-  it("Test 20: Manifest V3 is strictly valid and references existing bundled assets and icons", () => {
+  it("Test 20: Manifest V3 is strictly valid, contains narrow host permissions, and has no broad content script injections", () => {
     const extensionDir = path.resolve(__dirname, "../extension");
     const manifestPath = path.join(extensionDir, "manifest.json");
     expect(fs.existsSync(manifestPath)).toBe(true);
@@ -319,43 +319,51 @@ describe("AheadGuard Chrome Extension Test Suite (Section 11: Tests 1 - 20)", ()
     expect(manifest.background.service_worker).toBe("background.js");
     expect(manifest.action.default_popup).toBe("popup.html");
 
+    // Narrow host permissions: only official production Vercel endpoint and localhost development
+    expect(manifest.host_permissions).toContain("https://aheadguard-ai.vercel.app/*");
+    expect(manifest.host_permissions).toContain("http://localhost:3000/*");
+
+    // Broad content scripts must NOT be registered (privacy-first: zero DOM injection)
+    expect(manifest.content_scripts).toBeUndefined();
+
     // Verify all referenced files exist
     expect(fs.existsSync(path.join(extensionDir, manifest.background.service_worker))).toBe(true);
     expect(fs.existsSync(path.join(extensionDir, manifest.action.default_popup))).toBe(true);
     expect(fs.existsSync(path.join(extensionDir, manifest.icons["16"]))).toBe(true);
     expect(fs.existsSync(path.join(extensionDir, manifest.icons["48"]))).toBe(true);
     expect(fs.existsSync(path.join(extensionDir, manifest.icons["128"]))).toBe(true);
-    expect(fs.existsSync(path.join(extensionDir, manifest.content_scripts[0].js[0]))).toBe(true);
   });
 
   // Test 21: Backend URL setting validation prevents redirection to third-party endpoints
-  it("Test 21: Backend endpoint configuration rejects redirection to unexpected external domains", () => {
-    function isValidBackendEndpoint(url?: string): boolean {
-      if (!url || typeof url !== "string") return false;
-      try {
-        const parsed = new URL(url);
-        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-        if (parsed.username || parsed.password) return false;
-        const host = parsed.hostname.toLowerCase();
-        if (host === "localhost" || host === "127.0.0.1") return true;
-        if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
-        return false;
-      } catch {
-        return false;
-      }
-    }
+  it("Test 21: Backend endpoint configuration rejects redirection to unexpected external domains and unapproved Vercel apps", async () => {
+    const { isValidBackendEndpoint, DEFAULT_BACKEND_URL, PRODUCTION_BACKEND_URL } = await import("../extension/src/config");
 
-    // Permitted endpoints
+    // Default backend URL must point to production
+    expect(DEFAULT_BACKEND_URL).toBe("https://aheadguard-ai.vercel.app");
+    expect(PRODUCTION_BACKEND_URL).toBe("https://aheadguard-ai.vercel.app");
+
+    // Permitted endpoints: exact official production host and local development
+    expect(isValidBackendEndpoint("https://aheadguard-ai.vercel.app")).toBe(true);
     expect(isValidBackendEndpoint("http://localhost:3000")).toBe(true);
     expect(isValidBackendEndpoint("http://127.0.0.1:3000")).toBe(true);
     expect(isValidBackendEndpoint("http://localhost:8080")).toBe(true);
-    expect(isValidBackendEndpoint("https://aheadguard-ai.vercel.app")).toBe(true);
 
-    // Blocked malicious/exfiltration endpoints
+    // Blocked: unrelated Vercel projects (must NOT use broad *.vercel.app wildcard)
+    expect(isValidBackendEndpoint("https://example.vercel.app")).toBe(false);
+    expect(isValidBackendEndpoint("https://other-project.vercel.app")).toBe(false);
+    expect(isValidBackendEndpoint("https://attacker.vercel.app")).toBe(false);
+
+    // Blocked: malicious/exfiltration endpoints
     expect(isValidBackendEndpoint("https://attacker-data-logger.com")).toBe(false);
     expect(isValidBackendEndpoint("http://evil.com/api")).toBe(false);
     expect(isValidBackendEndpoint("javascript:void(0)")).toBe(false);
+
+    // Blocked: embedded credentials in URL
     expect(isValidBackendEndpoint("http://user:pass@localhost:3000")).toBe(false);
+    expect(isValidBackendEndpoint("https://user:pass@aheadguard-ai.vercel.app")).toBe(false);
+
+    // Blocked: insecure HTTP for production host
+    expect(isValidBackendEndpoint("http://aheadguard-ai.vercel.app")).toBe(false);
   });
 
   // Test 22: Sender verification blocks messages missing required sender identity

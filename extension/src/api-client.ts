@@ -1,5 +1,6 @@
 import type { InvestigationReport, RiskOutcome } from "./types";
 import { validateAndNormalizeUrl } from "../../lib/url-safety";
+import { DEFAULT_BACKEND_URL } from "./config";
 
 export interface CheckOptions {
   url: string;
@@ -7,8 +8,6 @@ export interface CheckOptions {
   onProgress?: (message: string) => void;
   signal?: AbortSignal;
 }
-
-const DEFAULT_BACKEND_URL = "http://localhost:3000";
 
 /**
  * Sanitizes errors to prevent exposing internal stack frames or tokens.

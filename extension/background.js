@@ -163,8 +163,28 @@ function validateAndNormalizeUrl(rawInput) {
   };
 }
 
+// extension/src/config.ts
+var PRODUCTION_BACKEND_URL = "https://aheadguard-ai.vercel.app";
+var DEFAULT_BACKEND_URL = PRODUCTION_BACKEND_URL;
+function isValidBackendEndpoint(url) {
+  if (!url || typeof url !== "string") return false;
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) return false;
+    const host = parsed.hostname.toLowerCase();
+    if (host === "aheadguard-ai.vercel.app") {
+      return parsed.protocol === "https:" && (!parsed.port || parsed.port === "443");
+    }
+    if (host === "localhost" || host === "127.0.0.1") {
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 // extension/src/api-client.ts
-var DEFAULT_BACKEND_URL = "http://localhost:3000";
 function sanitizeClientMessage(error) {
   const text = error instanceof Error ? error.message : String(error || "Investigation service unavailable");
   return text.replace(/(?:tf_|api[-_]?key|key|secret|token|bearer)[=:\s]+[A-Za-z0-9_\-\.]{8,}/gi, "[REDACTED]").replace(/\bat\s+.*?(?:\.ts|\.js|\.mjs|\.cjs)(?::\d+:\d+)?/gi, "").replace(/[A-Za-z]:\\[^\s]+/g, "").replace(/\/[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.]+/g, "").trim() || "An unexpected investigation error occurred.";
@@ -321,7 +341,7 @@ async function investigateUrl(options) {
 var DEFAULT_SETTINGS = {
   monitoringEnabled: true,
   historyPaused: false,
-  backendUrl: "http://localhost:3000"
+  backendUrl: DEFAULT_BACKEND_URL
 };
 var tabStates = /* @__PURE__ */ new Map();
 var recentChecks = /* @__PURE__ */ new Map();
@@ -331,20 +351,6 @@ function isSupportedUrl(url) {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-function isValidBackendEndpoint(url) {
-  if (!url || typeof url !== "string") return false;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    if (parsed.username || parsed.password) return false;
-    const host = parsed.hostname.toLowerCase();
-    if (host === "localhost" || host === "127.0.0.1") return true;
-    if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
-    return false;
   } catch {
     return false;
   }
@@ -601,3 +607,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })();
   return true;
 });
+export {
+  isValidBackendEndpoint
+};

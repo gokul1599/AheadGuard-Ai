@@ -1,3 +1,7 @@
+// extension/src/config.ts
+var PRODUCTION_BACKEND_URL = "https://aheadguard-ai.vercel.app";
+var DEFAULT_BACKEND_URL = PRODUCTION_BACKEND_URL;
+
 // extension/src/popup.ts
 document.addEventListener("DOMContentLoaded", async () => {
   const activeUrlDisplay = document.getElementById("active-url-display");
@@ -40,7 +44,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const openWebApp = document.getElementById("open-web-app");
   let currentTabUrl;
   let activeTabId;
-  let currentBackendUrl = "http://localhost:3000";
+  let currentBackendUrl = DEFAULT_BACKEND_URL;
   try {
     const status = await chrome.runtime.sendMessage({ type: "GET_STATUS" });
     currentTabUrl = status.url;
@@ -121,7 +125,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   });
   backendUrlInput.addEventListener("change", async () => {
-    const newUrl = backendUrlInput.value.trim() || "http://localhost:3000";
+    const newUrl = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
     currentBackendUrl = newUrl;
     openWebApp.href = newUrl;
     await chrome.runtime.sendMessage({

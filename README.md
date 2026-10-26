@@ -4,6 +4,9 @@
 
 AheadGuard AI is a proactive digital safety guardian that investigates unknown destinations, phishing traps, and deceptive links **before** you commit sensitive actions. It deploys an isolated, read-only remote browser sandbox to inspect live behavior, evaluates observable evidence against a deterministic policy engine, simulates consequences with **Action Preview**, and maintains a privacy-first **Evidence Ledger**.
 
+- **Deployed Production Dashboard**: [https://aheadguard-ai.vercel.app](https://aheadguard-ai.vercel.app)
+- **GitHub Repository**: [https://github.com/gokul1599/AheadGuard-Ai](https://github.com/gokul1599/AheadGuard-Ai)
+
 ---
 
 ## Key Features
@@ -18,7 +21,7 @@ AheadGuard AI is a proactive digital safety guardian that investigates unknown d
    - Classifies destinations strictly based on observable facts, never on speculative trust scores:
      - 🔴 **High risk**: Active credential phishing, deceptive lookalike domains, unauthenticated redirects, or high-risk input prompts.
      - 🟡 **Suspicious**: Lookalike heuristics, brand mismatch signals, or ambiguous unverified destinations.
-     - 🟢 **Low observed risk**: Benign destination verified with no warning signals found in this probe (*"Low observed risk is not an absolute guarantee of safety"*).
+     - 🟢 **Low observed risk**: Benign destination verified with no warning signals found in this probe (*"Notice: Low observed risk indicates no active warning signals were found during this probe. It is not an absolute guarantee of safety."*).
      - ⚪ **Unknown**: Destination could not be verified due to timeouts, network barriers, or unreachable targets.
 
 3. **Action Preview ("Before You Commit")**:
@@ -36,11 +39,11 @@ AheadGuard AI is a proactive digital safety guardian that investigates unknown d
    - One-click pause/resume recording toggle and instant ledger wipe.
 
 6. **Chrome Extension (Manifest V3)**:
+   - Configured out-of-the-box for production (`https://aheadguard-ai.vercel.app`).
+   - Narrow host permissions restricted strictly to the official backend origin and localhost development.
+   - Privacy-first design: **Zero broad content-script injections**. All tab and navigation awareness relies exclusively on native Chrome MV3 APIs (`activeTab`, `webNavigation`).
    - Real-time active tab detection with automatic filtering of internal (`chrome://`) schemes.
-   - Collapsible manual URL checker.
-   - Compact Action Preview and evidence summaries.
-   - Configurable settings drawer (navigation awareness, ledger pause, customizable backend endpoint).
-   - "Return to Safety" safe navigation action.
+   - Collapsible manual URL checker, Action Preview, Evidence highlights, and "Return to Safety" navigation action.
 
 ---
 
@@ -49,9 +52,16 @@ AheadGuard AI is a proactive digital safety guardian that investigates unknown d
 - **Strict Server-Side Isolation**: All external browser interactions occur inside an isolated remote sandbox. The investigator will never log in, submit forms, execute files, or follow instructions attempting to hijack the investigation.
 - **SSRF & Loopback Defense**: Pre-flight validation blocks loopback (`127.0.0.1`, `localhost`), link-local (`169.254.0.0/16`), private RFC 1918 subnets, cloud metadata endpoints (`169.254.169.254`), and non-standard schemes (`javascript:`, `file:`, `data:`).
 - **Redirect Chain Validation**: Follows redirection targets and re-evaluates `observed_final_url` against SSRF rules to prevent open-redirect escape attacks.
-- **Defensive CORS Allowlist**: Strictly validates incoming Chrome extension origins against configured 32-letter extension IDs (`getAllowedExtensionIds`) with fail-safe rejection (`403 Forbidden`).
-- **Payload Size Limits**: Rejects requests exceeding 16KB (`413 Payload Too Large`) to protect against buffer overflow and denial-of-service attempts.
-- **Backend Endpoint Validation**: Chrome extension validates user-supplied backend endpoints to prevent rogue redirection to unauthorized servers.
+- **Strict Origin & CORS Allowlist**: 
+  - Permits the exact production dashboard origin (`https://aheadguard-ai.vercel.app`).
+  - Permits explicitly configured Chrome Extension IDs matching the standard 32-lowercase-letter format (`/^[a-z]{32}$/`).
+  - Permits local development origins (`http://localhost:*`, `http://127.0.0.1:*`).
+  - Rejects arbitrary websites, unapproved Vercel projects, and unknown extension IDs with `403 Forbidden`.
+- **Public Abuse Protection & Rate Limiting**:
+  - Implements an IP-based sliding-window rate limiter (20 requests per minute, burst cap of 5 per 5 seconds) returning `429 Too Many Requests` with `Retry-After` headers.
+  - *Architecture Note*: This built-in limiter enforces instance-level protection on serverless compute. For globally synchronized multi-region rate limiting across all edge nodes, an external distributed store (such as Upstash Redis or Vercel KV with `@upstash/ratelimit`) should be configured.
+- **Payload Size Limits**: Rejects requests exceeding 16KB (`413 Payload Too Large`) to protect against memory exhaustion.
+- **Backend Endpoint Validation**: The Chrome Extension validates backend URLs against an exact allowlist (`aheadguard-ai.vercel.app` on HTTPS and localhost/127.0.0.1), preventing rogue redirection to third-party endpoints.
 - **Safe Error Redaction**: Upstream provider errors, API keys, and stack traces are redacted before delivery to the client.
 
 ---
@@ -63,21 +73,20 @@ aheadguard-mvp-starter/
 ├── app/
 │   ├── api/
 │   │   └── investigate/
-│   │       └── route.ts          # Server-side investigation API, SSE streaming & CORS enforcement
+│   │       └── route.ts          # Server-side investigation API, SSE streaming, CORS & rate limiting
 │   ├── globals.css               # Dark cybersecurity guardian design tokens & styles
 │   ├── layout.tsx                # Root layout & security metadata
 │   └── page.tsx                  # Web dashboard UI, HUD terminal, Action Preview & Ledger
 ├── extension/
-│   ├── manifest.json             # Chrome Manifest V3 declaration
+│   ├── manifest.json             # Chrome Manifest V3 declaration (narrow permissions, no content scripts)
 │   ├── popup.html                # Extension popup markup
 │   ├── popup.css                 # Dark cybersecurity popup styles
 │   ├── background.js             # Bundled service worker
 │   ├── popup.js                  # Bundled popup script
-│   ├── content.js                # Bundled content script
 │   └── src/
 │       ├── api-client.ts         # Extension API client with timeout & error handling
 │       ├── background.ts         # Service worker, navigation monitor & storage manager
-│       ├── content.ts            # Content script
+│       ├── config.ts             # Production & development backend configuration
 │       ├── popup.ts              # Popup UI controller & renderer
 │       └── types.ts              # Extension TypeScript definitions
 ├── lib/
@@ -86,8 +95,8 @@ aheadguard-mvp-starter/
 │   ├── types.ts                  # Shared data models & evidence schemas
 │   └── url-safety.ts             # SSRF prevention & destination safety validator
 ├── tests/
-│   ├── api-security.test.ts      # CORS, payload size, SSRF & header security tests
-│   ├── extension.test.ts         # Extension settings, ledger & API client tests
+│   ├── api-security.test.ts      # CORS, rate limiting, payload size, SSRF & header tests
+│   ├── extension.test.ts         # Extension settings, ledger & endpoint validation tests
 │   ├── policy-engine.test.ts     # Risk classification & Action Preview tests
 │   ├── real-world-integration.test.ts # 26 real-world security scenarios
 │   ├── smoke.test.ts             # Live TinyFish smoke test (optional live execution)
@@ -133,8 +142,8 @@ aheadguard-mvp-starter/
    # Server-side TinyFish API Key (never commit to git)
    TINYFISH_API_KEY=your_tinyfish_api_key_here
 
-   # Comma-separated 32-character Chrome Extension IDs approved for CORS
-   ALLOWED_EXTENSION_IDS=aheadguardextensiondevid123456
+   # Comma-separated 32-character lowercase Chrome Extension IDs approved for CORS
+   ALLOWED_EXTENSION_IDS=abcdefghijklmnopqrstuvwxyzabcdef
    ```
 
 4. Build the Chrome extension assets:
@@ -150,7 +159,9 @@ aheadguard-mvp-starter/
 
 ---
 
-## Installing the Chrome Extension
+## Installing & Configuring the Chrome Extension
+
+### Obtaining your Chrome Extension ID
 
 1. Build the extension bundle:
    ```bash
@@ -158,15 +169,28 @@ aheadguard-mvp-starter/
    ```
 2. Open Google Chrome and navigate to `chrome://extensions`.
 3. Enable **Developer mode** via the toggle in the top-right corner.
-4. Click **Load unpacked**.
-5. Select the `extension` folder located inside the project repository.
-6. The AheadGuard AI shield icon will appear in your Chrome toolbar. Pin it for quick access.
+4. Click **Load unpacked** and select the `extension` folder inside this repository.
+5. In the card for **AheadGuard AI**, copy the 32-character lowercase string shown under **ID** (e.g. `abcdefghijklmnopqrstuvwxyzabcdef`).
+
+### Configuring Extension ID in Vercel (Production)
+
+For the Chrome Extension to access the production API at `https://aheadguard-ai.vercel.app/api/investigate`, you must add your extension ID to the server-side environment variables:
+
+1. Open your Vercel project settings:
+   **[https://vercel.com/gokul1599/aheadguard-ai/settings/environment-variables](https://vercel.com/gokul1599/aheadguard-ai/settings/environment-variables)**
+2. Add a new variable:
+   - **Key**: `ALLOWED_EXTENSION_IDS`
+   - **Value**: `your_copied_32_character_extension_id`
+   - **Environment**: Select `Production` and `Preview`.
+3. Click **Save** and redeploy.
+
+Without this setting, the server will defensively reject extension requests with `403 Forbidden: CORS origin not allowed.`
 
 ---
 
 ## Running Verification Tests
 
-AheadGuard AI includes a suite of 77 automated tests verifying safety policies, SSE streaming, CORS allowlisting, and 26 real-world security scenarios:
+AheadGuard AI includes a suite of automated tests verifying CORS allowlisting, rate limiting, safety policies, SSE streaming, and 26 real-world security scenarios:
 
 ```bash
 # Run unit & integration test suite (Vitest)
@@ -181,12 +205,6 @@ npx tsc --noEmit
 # Run Next.js production build
 npm run build
 ```
-
----
-
-## Development Principles & Responsible Disclosure
-
-AheadGuard AI is a decision-support guardian grounded strictly in verifiable, observable evidence. It does not replace client-side endpoint security, antivirus solutions, or operating system protections. Users must never paste passwords, OTPs, or private personal data into the investigation engine.
 
 ---
 

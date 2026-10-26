@@ -6,11 +6,13 @@ import type {
   TabStatusResponse,
 } from "./types";
 import { investigateUrl } from "./api-client";
+import { DEFAULT_BACKEND_URL, isValidBackendEndpoint } from "./config";
+export { isValidBackendEndpoint };
 
 const DEFAULT_SETTINGS: ExtensionSettings = {
   monitoringEnabled: true,
   historyPaused: false,
-  backendUrl: "http://localhost:3000",
+  backendUrl: DEFAULT_BACKEND_URL,
 };
 
 // In-memory tab state and deduplication cache
@@ -31,22 +33,6 @@ function isSupportedUrl(url?: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-function isValidBackendEndpoint(url?: string): boolean {
-  if (!url || typeof url !== "string") return false;
-  try {
-    const parsed = new URL(url);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
-    if (parsed.username || parsed.password) return false;
-    const host = parsed.hostname.toLowerCase();
-    // Allow local development endpoints and official deployed Vercel domain
-    if (host === "localhost" || host === "127.0.0.1") return true;
-    if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
-    return false;
   } catch {
     return false;
   }

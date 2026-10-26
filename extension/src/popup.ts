@@ -4,6 +4,7 @@ import type {
   ExtensionSettings,
   ExtensionLedgerItem,
 } from "./types";
+import { DEFAULT_BACKEND_URL } from "./config";
 
 document.addEventListener("DOMContentLoaded", async () => {
   // Elements
@@ -52,7 +53,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   let currentTabUrl: string | undefined;
   let activeTabId: number | undefined;
-  let currentBackendUrl = "http://localhost:3000";
+  let currentBackendUrl = DEFAULT_BACKEND_URL;
 
   // 1. Load initial status from background service worker
   try {
@@ -152,7 +153,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   backendUrlInput.addEventListener("change", async () => {
-    const newUrl = backendUrlInput.value.trim() || "http://localhost:3000";
+    const newUrl = backendUrlInput.value.trim() || DEFAULT_BACKEND_URL;
     currentBackendUrl = newUrl;
     openWebApp.href = newUrl;
     await chrome.runtime.sendMessage({

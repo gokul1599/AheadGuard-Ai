@@ -67,6 +67,71 @@ describe("API Security, Secret Redaction & Hardened CORS", () => {
   });
 
   // Section 2: Hardened CORS Allowlist Verification
+  it("CORS 0: Exact production dashboard origin (https://aheadguard-ai.vercel.app) is permitted for OPTIONS preflight and POST", async () => {
+    const prodOrigin = "https://aheadguard-ai.vercel.app";
+
+    // 1. Verify OPTIONS preflight receives permissive CORS headers
+    const optionsReq = new Request("https://aheadguard-ai.vercel.app/api/investigate", {
+      method: "OPTIONS",
+      headers: { Origin: prodOrigin },
+    });
+    const optionsRes = await OPTIONS(optionsReq);
+    expect(optionsRes.status).toBe(204);
+    expect(optionsRes.headers.get("Access-Control-Allow-Origin")).toBe(prodOrigin);
+    expect(optionsRes.headers.get("Access-Control-Allow-Methods")).toContain("POST");
+
+    // 2. Verify POST request from production dashboard is permitted
+    global.fetch = vi.fn().mockImplementation((_url, init) => {
+      const isSse = init?.headers?.["Accept"]?.includes("text/event-stream");
+      if (isSse) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "text/event-stream" }),
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  'event: report\ndata: {"riskOutcome":"Low observed risk","originalUrl":"https://example.com"}\n\n'
+                )
+              );
+              controller.close();
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          status: "completed",
+          report: { riskOutcome: "Low observed risk", originalUrl: "https://example.com" },
+        }),
+      });
+    });
+
+    const postReq = new Request("https://aheadguard-ai.vercel.app/api/investigate", {
+      method: "POST",
+      headers: {
+        Origin: prodOrigin,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ input: "https://example.com" }),
+    });
+    const postRes = await POST(postReq);
+    expect(postRes.status).toBe(200);
+    expect(postRes.headers.get("Access-Control-Allow-Origin")).toBe(prodOrigin);
+  });
+
+  it("CORS 0b: OPTIONS preflight with missing Origin header returns 403 Forbidden", async () => {
+    const req = new Request("http://localhost:3000/api/investigate", {
+      method: "OPTIONS",
+    });
+    const res = await OPTIONS(req);
+    expect(res.status).toBe(403);
+  });
+
   it("CORS 1: Approved extension origin configured in ALLOWED_EXTENSION_IDS receives permissive CORS headers", async () => {
     const origin = `chrome-extension://${APPROVED_EXTENSION_ID}`;
     const req = new Request("http://localhost:3000/api/investigate", {
@@ -127,6 +192,8 @@ describe("API Security, Secret Redaction & Hardened CORS", () => {
       "https://attacker.com",
       "https://phishing-site.online",
       "http://untrusted.org:8080",
+      "https://evil.vercel.app",
+      "https://unapproved.vercel.app",
     ];
 
     for (const origin of webOrigins) {
@@ -199,5 +266,49 @@ describe("API Security, Secret Redaction & Hardened CORS", () => {
     const body = await response.json();
     expect(body.error).toMatch(/invalid json/i);
     expect(JSON.stringify(body)).not.toContain("SyntaxError");
+  });
+
+  // Section 4: Public API Abuse Protection & Rate Limiting
+  it("Rate Limiting: Sliding-window rate limiter rejects excessive requests from same IP with 429", async () => {
+    const { checkRateLimit, resetRateLimitForTesting } = await import("../lib/api-security");
+    resetRateLimitForTesting();
+
+    const testIp = "198.51.100.42";
+
+    // 1. First 4 requests within burst limit are allowed
+    for (let i = 0; i < 4; i++) {
+      const res = checkRateLimit(testIp);
+      expect(res.allowed).toBe(true);
+      expect(res.limit).toBe(20);
+    }
+
+    // 5th request hits the burst limit (max 5 in 5 seconds)
+    const fifth = checkRateLimit(testIp);
+    expect(fifth.allowed).toBe(true);
+
+    // 6th request trips the burst rate limit
+    const tripped = checkRateLimit(testIp);
+    expect(tripped.allowed).toBe(false);
+    expect(tripped.retryAfter).toBeGreaterThanOrEqual(1);
+
+    // 2. Integration test via POST handler: verify HTTP 429 and Retry-After header
+    const postReq = new Request("http://localhost:3000/api/investigate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Forwarded-For": testIp,
+      },
+      body: JSON.stringify({ input: "https://example.com" }),
+    });
+
+    const postRes = await POST(postReq);
+    expect(postRes.status).toBe(429);
+    expect(postRes.headers.get("Retry-After")).toBeDefined();
+    expect(postRes.headers.get("X-RateLimit-Limit")).toBe("20");
+
+    const errBody = await postRes.json();
+    expect(errBody.error).toMatch(/too many investigation requests/i);
+
+    resetRateLimitForTesting();
   });
 });

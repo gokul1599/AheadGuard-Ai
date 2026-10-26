@@ -4,44 +4,14 @@ import { validateAndNormalizeUrl } from "@/lib/url-safety";
 import { executeTinyFishInvestigation } from "@/lib/tinyfish";
 import { assessInvestigation } from "@/lib/policy";
 import type { ProgressEvent } from "@/lib/types";
+import {
+  isAllowedOrigin,
+  checkRateLimit,
+  getClientIp,
+} from "@/lib/api-security";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
-
-/**
- * Retrieves the set of explicitly approved Chrome Extension IDs from the environment.
- * Only explicitly whitelisted IDs are trusted.
- * If unset or invalid, fails safely by permitting no extension origins.
- */
-function getAllowedExtensionIds(): Set<string> {
-  const raw = process.env.ALLOWED_EXTENSION_IDS || process.env.AHEADGUARD_EXTENSION_ID || "";
-  const validIds = raw
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => /^[a-z]{32}$/.test(s));
-  return new Set(validIds);
-}
-
-function isAllowedOrigin(origin: string | null): boolean {
-  if (!origin) return true; // Direct non-browser requests, background service worker
-
-  // Explicitly permitted local development origins
-  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
-
-  // Strict Chrome Extension allowlist: must be syntactically valid AND explicitly whitelisted
-  if (origin.startsWith("chrome-extension://")) {
-    const extensionId = origin.replace("chrome-extension://", "").replace(/\/.*$/, "").toLowerCase();
-    // Reject malformed extension IDs immediately
-    if (!/^[a-z]{32}$/.test(extensionId)) {
-      return false;
-    }
-    // Fail safely: only explicitly approved AheadGuard extension IDs are accepted
-    const allowed = getAllowedExtensionIds();
-    return allowed.has(extensionId);
-  }
-
-  return false;
-}
 
 function getCorsHeaders(request: Request): Record<string, string> {
   const origin = request.headers.get("origin");
@@ -60,7 +30,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
 
 export async function OPTIONS(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && !isAllowedOrigin(origin)) {
+  if (!origin || !isAllowedOrigin(origin)) {
     return new Response("CORS origin not allowed.", { status: 403 });
   }
   const headers = getCorsHeaders(request);
@@ -105,6 +75,24 @@ export async function POST(request: Request) {
   const contentLength = request.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > 16384) {
     return jsonResponse(request, { error: "Payload too large (max 16KB)." }, { status: 413 });
+  }
+
+  // Rate limiting & public abuse protection
+  const clientIp = getClientIp(request);
+  const rateLimit = checkRateLimit(clientIp);
+  if (!rateLimit.allowed) {
+    return jsonResponse(
+      request,
+      { error: "Too many investigation requests. Please wait before submitting another destination." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfter || 60),
+          "X-RateLimit-Limit": String(rateLimit.limit),
+          "X-RateLimit-Remaining": "0",
+        },
+      }
+    );
   }
 
   try {
