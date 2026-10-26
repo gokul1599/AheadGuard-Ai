@@ -156,6 +156,55 @@ export default function Home() {
         const decoder = new TextDecoder();
         let buffer = "";
 
+        const handlePacket = (chunk: string) => {
+          let eventType = "message";
+          const dataLines: string[] = [];
+
+          for (const line of chunk.split(/\r?\n/)) {
+            if (line.startsWith("event:")) eventType = line.slice(6).trim();
+            if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+          }
+
+          if (!dataLines.length) return;
+          const dataRaw = dataLines.join("\n");
+
+          try {
+            const parsed = JSON.parse(dataRaw);
+            if (eventType === "started") {
+              setStatus(parsed.message);
+              addLog(`[SESSION] ${parsed.message}`);
+            } else if (eventType === "streaming_url") {
+              setStreamingUrl(parsed.streamingUrl);
+              addLog(`[STREAM] Live replay URL generated`);
+            } else if (eventType === "progress") {
+              setStatus(parsed.message);
+              addLog(`[PROGRESS] ${parsed.message}`);
+            } else if (eventType === "heartbeat") {
+              // Heartbeat
+            } else if (eventType === "complete") {
+              setStatus("Finalizing evidence assessment…");
+              addLog(`[COMPLETED] Remote browser execution finished`);
+            } else if (eventType === "report") {
+              const rep = (parsed.report || parsed) as InvestigationReport;
+              setResult(rep);
+              if (rep.replayUrl) setStreamingUrl(rep.replayUrl);
+              saveToLedger(rep);
+              setStatus(`Investigation completed · ${rep.riskOutcome}`);
+              addLog(`[ASSESSMENT] Policy engine classified: ${rep.riskOutcome}`);
+            } else if (eventType === "error") {
+              if (parsed.report) {
+                setResult(parsed.report);
+                saveToLedger(parsed.report);
+              }
+              throw new Error(parsed.error || parsed.message || "Investigation failed.");
+            }
+          } catch (err) {
+            if (err instanceof Error && err.message !== "Unexpected token") {
+              throw err;
+            }
+          }
+        };
+
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
@@ -168,53 +217,15 @@ export default function Home() {
             const delimiter = buffer.slice(splitIdx).match(/^\r?\n\r?\n/)?.[0] ?? "\n\n";
             buffer = buffer.slice(splitIdx + delimiter.length);
 
-            let eventType = "message";
-            const dataLines: string[] = [];
-
-            for (const line of chunk.split(/\r?\n/)) {
-              if (line.startsWith("event:")) eventType = line.slice(6).trim();
-              if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-            }
-
-            if (!dataLines.length) continue;
-            const dataRaw = dataLines.join("\n");
-
-            try {
-              const parsed = JSON.parse(dataRaw);
-              if (eventType === "started") {
-                setStatus(parsed.message);
-                addLog(`[SESSION] ${parsed.message}`);
-              } else if (eventType === "streaming_url") {
-                setStreamingUrl(parsed.streamingUrl);
-                addLog(`[STREAM] Live replay URL generated`);
-              } else if (eventType === "progress") {
-                setStatus(parsed.message);
-                addLog(`[PROGRESS] ${parsed.message}`);
-              } else if (eventType === "heartbeat") {
-                // Heartbeat
-              } else if (eventType === "complete") {
-                setStatus("Finalizing evidence assessment…");
-                addLog(`[COMPLETED] Remote browser execution finished`);
-              } else if (eventType === "report") {
-                const rep = (parsed.report || parsed) as InvestigationReport;
-                setResult(rep);
-                if (rep.replayUrl) setStreamingUrl(rep.replayUrl);
-                saveToLedger(rep);
-                setStatus(`Investigation completed · ${rep.riskOutcome}`);
-                addLog(`[ASSESSMENT] Policy engine classified: ${rep.riskOutcome}`);
-              } else if (eventType === "error") {
-                if (parsed.report) {
-                  setResult(parsed.report);
-                  saveToLedger(parsed.report);
-                }
-                throw new Error(parsed.error || parsed.message || "Investigation failed.");
-              }
-            } catch (err) {
-              if (err instanceof Error && err.message !== "Unexpected token") {
-                throw err;
-              }
+            if (chunk.trim()) {
+              handlePacket(chunk);
             }
           }
+        }
+
+        if (buffer.trim()) {
+          handlePacket(buffer);
+          buffer = "";
         }
       } else {
         // Fallback for regular JSON response

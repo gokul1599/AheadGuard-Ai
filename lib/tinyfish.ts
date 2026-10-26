@@ -31,6 +31,9 @@ export interface TinyFishExecutionResult {
   goalFailed: boolean;
   errorMessage?: string;
   rawAgentText: string;
+  receivedEventTypes?: string[];
+  httpStatus?: number;
+  streamEndedNormally?: boolean;
 }
 
 export const READ_ONLY_INVESTIGATION_GOAL = [
@@ -42,6 +45,28 @@ export const READ_ONLY_INVESTIGATION_GOAL = [
   "Return your findings as clean, valid JSON with exactly these keys: page_title, observed_final_url, claimed_organization, visible_purpose, credential_or_payment_request, download_or_permission_request, observed_warning_signs (array of strings), positive_signals (array of strings), checks_performed (array of strings), unknowns (array of strings), overall_observation.",
   "Never state a site is safe solely because warning signs were absent. If the page is blocked, inaccessible, or incomplete, state that explicitly in unknowns.",
 ].join(" ");
+
+/**
+ * Sanitizes sensitive tokens, API keys, and authorization headers from error messages.
+ */
+export function sanitizeErrorMessage(message: unknown, apiKey?: string): string {
+  if (typeof message !== "string") {
+    message = String(message ?? "Unknown error");
+  }
+  let sanitized = message as string;
+
+  if (apiKey && apiKey.length > 5) {
+    sanitized = sanitized.replaceAll(apiKey, "[REDACTED_API_KEY]");
+  }
+
+  // Redact potential bearer tokens, sk-tinyfish keys, and standard API keys
+  sanitized = sanitized
+    .replace(/sk-[a-zA-Z0-9_\-]{16,}/g, "[REDACTED_API_KEY]")
+    .replace(/Bearer\s+[a-zA-Z0-9_\-\.]{16,}/gi, "Bearer [REDACTED_TOKEN]")
+    .replace(/X-API-Key:\s*([^\s,]+)/gi, "X-API-Key: [REDACTED]");
+
+  return sanitized.slice(0, 500).trim();
+}
 
 /**
  * Extracts and parses JSON from agent text, handling markdown code fences and partial wrappers.
@@ -90,13 +115,37 @@ export function extractStructuredJson(rawText: string): TinyFishStructuredResult
 }
 
 /**
- * Inspects a parsed COMPLETE event payload for goal failure.
+ * Checks if a candidate result record has at least one recognized investigation field.
  */
-export function evaluateGoalStatus(completePayload: unknown): {
+function hasStructuredFindings(record: Record<string, unknown>): boolean {
+  return (
+    record.page_title !== undefined ||
+    record.observed_final_url !== undefined ||
+    record.claimed_organization !== undefined ||
+    record.visible_purpose !== undefined ||
+    record.credential_or_payment_request !== undefined ||
+    record.download_or_permission_request !== undefined ||
+    record.observed_warning_signs !== undefined ||
+    record.positive_signals !== undefined ||
+    record.checks_performed !== undefined ||
+    record.unknowns !== undefined ||
+    record.overall_observation !== undefined
+  );
+}
+
+/**
+ * Inspects a parsed terminal event payload for goal failure, extracts the structured result,
+ * and handles nested results, stringified JSON, and failure states.
+ */
+export function evaluateGoalStatus(
+  completePayload: unknown,
+  apiKey?: string
+): {
   goalFailed: boolean;
   errorMessage?: string;
   resultData: unknown;
   rawText: string;
+  structuredResult?: TinyFishStructuredResult | null;
 } {
   if (!completePayload || typeof completePayload !== "object") {
     return {
@@ -104,49 +153,141 @@ export function evaluateGoalStatus(completePayload: unknown): {
       errorMessage: "TinyFish returned an empty or non-object completion payload.",
       resultData: null,
       rawText: String(completePayload ?? ""),
+      structuredResult: null,
     };
   }
 
   const root = completePayload as Record<string, unknown>;
+  const rootType = String(root.type ?? "").toUpperCase();
   const rootStatus = String(root.status ?? "").toLowerCase();
-  const rootError = root.error ? String(root.error) : undefined;
+  const rawRootError = root.error ?? (rootStatus === "error" || rootStatus === "failed" ? root.message : undefined);
+  const rootError = rawRootError ? sanitizeErrorMessage(String(rawRootError), apiKey) : undefined;
 
-  // Extract nested result if present
-  const resultObj = root.result !== undefined ? root.result : root;
-  const resultRecord = resultObj && typeof resultObj === "object" ? (resultObj as Record<string, unknown>) : null;
+  // Check if root type itself indicates terminal failure
+  const isTerminalErrorType =
+    rootType === "FAILED" ||
+    rootType === "FAILURE" ||
+    rootType === "ERROR" ||
+    rootType === "CANCELLED" ||
+    rootType === "CANCELED";
+
+  // Extract nested result candidate: support root.result, root.resultJson, root.output, or root
+  let resultCandidate: unknown;
+  if (root.result !== undefined && root.result !== null) {
+    resultCandidate = root.result;
+  } else if (root.resultJson !== undefined && root.resultJson !== null) {
+    resultCandidate = root.resultJson;
+  } else if (root.output !== undefined && root.output !== null) {
+    resultCandidate = root.output;
+  } else if (root.data !== undefined && root.data !== null && typeof root.data === "object") {
+    resultCandidate = root.data;
+  } else {
+    resultCandidate = root;
+  }
+
+  // Safely parse JSON strings when encountered in resultCandidate
+  if (typeof resultCandidate === "string") {
+    const trimmed = resultCandidate.trim();
+    if ((trimmed.startsWith("{") && trimmed.endsWith("}")) || (trimmed.startsWith("[") && trimmed.endsWith("]"))) {
+      try {
+        resultCandidate = JSON.parse(trimmed);
+      } catch {
+        // Keep as string
+      }
+    }
+  }
+
+  const resultRecord =
+    resultCandidate && typeof resultCandidate === "object" && !Array.isArray(resultCandidate)
+      ? (resultCandidate as Record<string, unknown>)
+      : null;
 
   const resultStatus = resultRecord ? String(resultRecord.status ?? "").toLowerCase() : "";
-  const resultError = resultRecord?.error ? String(resultRecord.error) : undefined;
+  const rawResultError = resultRecord?.error ? String(resultRecord.error) : undefined;
+  const resultError = rawResultError ? sanitizeErrorMessage(rawResultError, apiKey) : undefined;
 
   const isFailedStatus =
+    isTerminalErrorType ||
     rootStatus === "failed" ||
     rootStatus === "failure" ||
     rootStatus === "error" ||
+    rootStatus === "cancelled" ||
+    rootStatus === "canceled" ||
     resultStatus === "failed" ||
     resultStatus === "failure" ||
-    resultStatus === "error";
+    resultStatus === "error" ||
+    resultStatus === "cancelled" ||
+    resultStatus === "canceled";
 
-  const goalFailed = isFailedStatus || Boolean(rootError) || Boolean(resultError);
-  const errorMessage = rootError || resultError || (isFailedStatus ? "The investigation goal could not be completed." : undefined);
+  // Check if result is empty or completely devoid of findings despite a "complete" status
+  let isMissingFindings = false;
+  if (!isFailedStatus && !rootError && !resultError) {
+    if (!resultRecord && typeof resultCandidate !== "string") {
+      isMissingFindings = true;
+    } else if (resultRecord) {
+      // Check if it's an empty object or has no investigation keys
+      const keys = Object.keys(resultRecord).filter(
+        (k) => k !== "status" && k !== "type" && k !== "timestamp" && k !== "run_id"
+      );
+      if (keys.length === 0 || (!hasStructuredFindings(resultRecord) && typeof resultRecord.output !== "string")) {
+        isMissingFindings = true;
+      }
+    }
+  }
 
+  const goalFailed = isFailedStatus || Boolean(rootError) || Boolean(resultError) || isMissingFindings;
+
+  let errorMessage: string | undefined = undefined;
+  if (rootError) {
+    errorMessage = rootError;
+  } else if (resultError) {
+    errorMessage = resultError;
+  } else if (isFailedStatus) {
+    errorMessage = "The investigation goal could not be completed by the remote sandbox.";
+  } else if (isMissingFindings) {
+    errorMessage = "Investigation completed but returned empty or malformed result data.";
+  }
+
+  // Extract structured result and rawText
+  let structuredResult: TinyFishStructuredResult | null = null;
   let rawText = "";
-  if (typeof resultObj === "string") {
-    rawText = resultObj;
-  } else if (resultRecord && typeof resultRecord.output === "string") {
-    rawText = resultRecord.output;
+
+  if (typeof resultCandidate === "string") {
+    rawText = resultCandidate;
+    structuredResult = extractStructuredJson(rawText);
+  } else if (resultRecord) {
+    if (hasStructuredFindings(resultRecord)) {
+      structuredResult = resultRecord as TinyFishStructuredResult;
+    } else if (typeof resultRecord.output === "string") {
+      rawText = resultRecord.output;
+      structuredResult = extractStructuredJson(rawText);
+    }
+
+    if (!rawText) {
+      try {
+        rawText = JSON.stringify(resultRecord, null, 2);
+      } catch {
+        rawText = String(resultRecord);
+      }
+    }
+    if (!structuredResult) {
+      structuredResult = extractStructuredJson(rawText);
+    }
   } else {
     try {
-      rawText = JSON.stringify(resultObj, null, 2);
+      rawText = JSON.stringify(resultCandidate, null, 2);
     } catch {
-      rawText = String(resultObj);
+      rawText = String(resultCandidate ?? "");
     }
+    structuredResult = extractStructuredJson(rawText);
   }
 
   return {
     goalFailed,
     errorMessage,
-    resultData: resultObj,
+    resultData: resultCandidate,
     rawText,
+    structuredResult,
   };
 }
 
@@ -165,19 +306,28 @@ export async function executeTinyFishInvestigation(
   const requestTimeout = AbortSignal.timeout(110_000);
   const combinedSignal = signal ? AbortSignal.any([signal, requestTimeout]) : requestTimeout;
 
-  const response = await fetch("https://agent.tinyfish.ai/v1/automation/run-sse", {
-    method: "POST",
-    headers: {
-      "X-API-Key": apiKey,
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
-    body: JSON.stringify({
-      url,
-      goal: READ_ONLY_INVESTIGATION_GOAL,
-    }),
-    signal: combinedSignal,
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://agent.tinyfish.ai/v1/automation/run-sse", {
+      method: "POST",
+      headers: {
+        "X-API-Key": apiKey,
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        url,
+        goal: READ_ONLY_INVESTIGATION_GOAL,
+      }),
+      signal: combinedSignal,
+    });
+  } catch (fetchErr) {
+    if (combinedSignal.aborted) {
+      throw new Error("Investigation timed out after 110 seconds. The destination could not be fully verified.");
+    }
+    const cleanErr = sanitizeErrorMessage((fetchErr as Error)?.message || "Failed to connect to TinyFish", apiKey);
+    throw new Error(`Connection to TinyFish failed: ${cleanErr}`);
+  }
 
   if (!response.ok) {
     let errorDetail = "";
@@ -186,7 +336,8 @@ export async function executeTinyFishInvestigation(
     } catch {
       // Ignore text read failure
     }
-    throw new Error(`TinyFish returned HTTP ${response.status}: ${errorDetail || response.statusText}`);
+    const sanitizedDetail = sanitizeErrorMessage(errorDetail || response.statusText, apiKey);
+    throw new Error(`TinyFish returned HTTP ${response.status}: ${sanitizedDetail}`);
   }
 
   if (!response.body) {
@@ -197,8 +348,11 @@ export async function executeTinyFishInvestigation(
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
   let eventsCount = 0;
+  const receivedEventTypes: string[] = [];
   let streamingUrl: string | undefined;
   let completeData: unknown = undefined;
+  let terminalEventSeen = false;
+  let streamEndedNormally = false;
 
   const notify = (event: ProgressEvent) => {
     if (onProgress) {
@@ -217,44 +371,86 @@ export async function executeTinyFishInvestigation(
   });
 
   const processBlock = (block: string) => {
-    let eventName = "message";
+    let rawEventHeader: string | undefined = undefined;
     const dataLines: string[] = [];
 
+    // Support both CRLF and LF
     const lines = block.split(/\r?\n/);
     for (const line of lines) {
+      // Ignore SSE comments
+      if (line.startsWith(":")) {
+        continue;
+      }
       if (line.startsWith("event:")) {
-        eventName = line.slice(6).trim();
+        rawEventHeader = line.slice(6).trim();
       } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trim());
+        // Preserve space following data: according to SSE specification
+        const rest = line.slice(5);
+        dataLines.push(rest.startsWith(" ") ? rest.slice(1) : rest);
       }
     }
 
-    if (dataLines.length === 0) return;
+    if (dataLines.length === 0 && !rawEventHeader) return;
 
     eventsCount++;
     const dataText = dataLines.join("\n");
     let parsedData: unknown = dataText;
+    let parsedJsonObject: Record<string, unknown> | null = null;
+
     try {
-      parsedData = JSON.parse(dataText);
+      const parsed = JSON.parse(dataText);
+      parsedData = parsed;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        parsedJsonObject = parsed as Record<string, unknown>;
+      }
     } catch {
-      // Keep as string
+      // Non-JSON data payload; keep parsedData as raw string
     }
 
-    const upperEvent = eventName.toUpperCase();
+    // Determine normalized event type (case-insensitive):
+    // 1. Use event: header if present and not generic "message"
+    // 2. Otherwise use JSON data.type or data.event
+    let normalizedType = "";
+    if (rawEventHeader) {
+      const headerClean = rawEventHeader.trim().toUpperCase();
+      if (headerClean && headerClean !== "MESSAGE") {
+        normalizedType = headerClean;
+      }
+    }
 
-    if (upperEvent === "STARTED") {
+    if (!normalizedType && parsedJsonObject) {
+      const jsonType = parsedJsonObject.type ?? parsedJsonObject.event;
+      if (typeof jsonType === "string" && jsonType.trim()) {
+        normalizedType = jsonType.trim().toUpperCase();
+      }
+    }
+
+    if (!normalizedType) {
+      normalizedType = "MESSAGE";
+    }
+
+    receivedEventTypes.push(normalizedType);
+
+    // Route event according to normalized type
+    if (normalizedType === "STARTED") {
       notify({
         type: "started",
         message: "Browser session started. Navigating to destination…",
         timestamp: new Date().toISOString(),
       });
-    } else if (upperEvent === "STREAMING_URL") {
-      if (typeof parsedData === "string") {
+    } else if (normalizedType === "STREAMING_URL") {
+      if (parsedJsonObject) {
+        const candidate =
+          parsedJsonObject.streaming_url ??
+          parsedJsonObject.streamingUrl ??
+          parsedJsonObject.url;
+        if (typeof candidate === "string" && candidate.startsWith("http")) {
+          streamingUrl = candidate;
+        }
+      } else if (typeof parsedData === "string" && parsedData.startsWith("http")) {
         streamingUrl = parsedData;
-      } else if (parsedData && typeof parsedData === "object") {
-        const obj = parsedData as Record<string, unknown>;
-        streamingUrl = typeof obj.url === "string" ? obj.url : typeof obj.streaming_url === "string" ? obj.streaming_url : undefined;
       }
+
       if (streamingUrl) {
         notify({
           type: "streaming_url",
@@ -263,41 +459,69 @@ export async function executeTinyFishInvestigation(
           streamingUrl,
         });
       }
-    } else if (upperEvent === "PROGRESS") {
+    } else if (normalizedType === "PROGRESS") {
       let progressMsg = "Inspecting page elements…";
-      if (typeof parsedData === "string") {
-        progressMsg = parsedData;
-      } else if (parsedData && typeof parsedData === "object") {
-        const obj = parsedData as Record<string, unknown>;
-        progressMsg = String(obj.message ?? obj.status ?? obj.step ?? progressMsg);
+      if (parsedJsonObject) {
+        const candidateMsg =
+          parsedJsonObject.purpose ??
+          parsedJsonObject.message ??
+          parsedJsonObject.status ??
+          parsedJsonObject.step ??
+          parsedJsonObject.detail;
+        if (candidateMsg && typeof candidateMsg === "string") {
+          progressMsg = candidateMsg;
+        }
+      } else if (typeof parsedData === "string" && parsedData.trim()) {
+        progressMsg = parsedData.trim();
       }
+
       notify({
         type: "progress",
         message: progressMsg,
         timestamp: new Date().toISOString(),
         streamingUrl,
       });
-    } else if (upperEvent === "HEARTBEAT") {
+    } else if (normalizedType === "HEARTBEAT" || normalizedType === "PING") {
       notify({
         type: "heartbeat",
         message: "Investigator active…",
         timestamp: new Date().toISOString(),
       });
-    } else if (upperEvent === "COMPLETE") {
+    } else if (normalizedType === "COMPLETE" || normalizedType === "COMPLETED") {
       completeData = parsedData;
+      terminalEventSeen = true;
       notify({
         type: "complete",
         message: "Investigation data received. Evaluating evidence…",
         timestamp: new Date().toISOString(),
       });
+    } else if (
+      normalizedType === "FAILED" ||
+      normalizedType === "FAILURE" ||
+      normalizedType === "ERROR" ||
+      normalizedType === "CANCELLED" ||
+      normalizedType === "CANCELED"
+    ) {
+      completeData = parsedData;
+      terminalEventSeen = true;
+      const rawErrMsg = parsedJsonObject?.error ?? parsedJsonObject?.message ?? "Investigation failed.";
+      notify({
+        type: "error",
+        message: "Upstream investigation encountered a failure.",
+        timestamp: new Date().toISOString(),
+        error: sanitizeErrorMessage(String(rawErrMsg), apiKey),
+      });
     }
-    // Future or unknown events are safely ignored without crashing
+    // Unknown or future event types are safely ignored without crashing
   };
 
   try {
     while (true) {
       const { value, done } = await reader.read();
-      if (done) break;
+      if (done) {
+        streamEndedNormally = true;
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
 
@@ -311,41 +535,62 @@ export async function executeTinyFishInvestigation(
           processBlock(packet);
         }
 
-        if (completeData !== undefined) {
-          // Received terminal COMPLETE event
+        if (terminalEventSeen) {
+          // Received terminal event; safely close reader
           await reader.cancel().catch(() => undefined);
           break;
         }
       }
 
-      if (completeData !== undefined) break;
+      if (terminalEventSeen) break;
     }
 
-    // Process any residual data in buffer
+    // Process any residual data present in buffer when EOF arrives
     if (buffer.trim()) {
       processBlock(buffer);
+      buffer = "";
     }
   } catch (streamError) {
     if (combinedSignal.aborted) {
       throw new Error("Investigation timed out after 110 seconds. The destination could not be fully verified.");
     }
-    throw streamError;
+    // If a terminal event was already received before stream threw, proceed to evaluate it
+    if (!terminalEventSeen) {
+      const sanitized = sanitizeErrorMessage((streamError as Error)?.message || "Stream read error", apiKey);
+      return {
+        success: false,
+        completeData: null,
+        streamingUrl,
+        eventsCount,
+        goalFailed: true,
+        errorMessage: `Investigation stream interrupted (${sanitized}). Events received before error: [${receivedEventTypes.join(", ") || "none"}]. HTTP status: ${response.status}.`,
+        rawAgentText: "",
+        receivedEventTypes,
+        httpStatus: response.status,
+        streamEndedNormally: false,
+      };
+    }
   }
 
+  // Handle case where stream completed/closed without any recognized terminal event
   if (completeData === undefined) {
+    const eventsSummary = receivedEventTypes.length > 0 ? receivedEventTypes.join(", ") : "no events";
+    const eofDetail = streamEndedNormally ? "stream reached EOF" : "stream disconnected prematurely";
     return {
       success: false,
       completeData: null,
       streamingUrl,
       eventsCount,
       goalFailed: true,
-      errorMessage: "Investigation stream ended unexpectedly without a COMPLETE event.",
+      errorMessage: `Investigation stream ended without a terminal COMPLETE event (${eventsSummary}; ${eofDetail}; HTTP ${response.status}). Missing evidence cannot be treated as safe.`,
       rawAgentText: "",
+      receivedEventTypes,
+      httpStatus: response.status,
+      streamEndedNormally,
     };
   }
 
-  const { goalFailed, errorMessage, rawText } = evaluateGoalStatus(completeData);
-  const structuredResult = extractStructuredJson(rawText);
+  const { goalFailed, errorMessage, rawText, structuredResult } = evaluateGoalStatus(completeData, apiKey);
 
   return {
     success: !goalFailed,
@@ -356,5 +601,8 @@ export async function executeTinyFishInvestigation(
     goalFailed,
     errorMessage,
     rawAgentText: rawText,
+    receivedEventTypes,
+    httpStatus: response.status,
+    streamEndedNormally,
   };
 }

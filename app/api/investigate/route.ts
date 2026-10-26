@@ -136,13 +136,17 @@ export async function POST(request: Request) {
       const stream = new TransformStream();
       const writer = stream.writable.getWriter();
 
-      const sendEvent = async (event: ProgressEvent | { type: "report"; report: unknown }) => {
-        try {
-          const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
-          await writer.write(encoder.encode(payload));
-        } catch {
-          // Client might have disconnected
-        }
+      let writeChain = Promise.resolve();
+      const sendEvent = (event: ProgressEvent | { type: "report"; report: unknown }): Promise<void> => {
+        writeChain = writeChain.then(async () => {
+          try {
+            const payload = `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
+            await writer.write(encoder.encode(payload));
+          } catch {
+            // Client might have disconnected
+          }
+        });
+        return writeChain;
       };
 
       // Execute investigation asynchronously while streaming events
@@ -195,6 +199,7 @@ export async function POST(request: Request) {
             report: failureReport,
           });
         } finally {
+          await writeChain;
           await writer.close().catch(() => undefined);
         }
       })();

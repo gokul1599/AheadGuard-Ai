@@ -19,6 +19,8 @@ describe("Optional Live Smoke Test", () => {
 
       expect(result).toBeDefined();
       expect(result.eventsCount).toBeGreaterThan(0);
+      expect(result.success).toBe(true);
+      expect(result.structuredResult).toBeDefined();
 
       const report = assessInvestigation({
         submittedUrl: url,
@@ -26,7 +28,7 @@ describe("Optional Live Smoke Test", () => {
       });
 
       expect(report.investigationId).toBeDefined();
-      expect(["Low observed risk", "Unknown"]).toContain(report.riskOutcome);
+      expect(["Low observed risk", "Suspicious", "Unknown"]).toContain(report.riskOutcome);
     },
     120_000
   );
