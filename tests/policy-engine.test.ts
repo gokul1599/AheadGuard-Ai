@@ -1430,3 +1430,251 @@ describe("Platform Services, User-Hosted Content, Hosted Payment & Unknown Verif
   });
 });
 
+describe("Vercel Platform Service Classification & AheadGuard Self-Investigation Audits", () => {
+  it("Test 1: An ordinary Vercel-hosted informational application with no observed threats yields Low Observed Risk", () => {
+    const url = new URL("https://my-docs-app.vercel.app/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 3,
+      rawAgentText: "Documentation site for open source project hosted on Vercel.",
+      structuredResult: {
+        page_title: "Project Docs · Fast and Modern",
+        observed_final_url: "https://my-docs-app.vercel.app/",
+        claimed_organization: undefined,
+        visible_purpose: "Open source software documentation",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Valid HTTPS connection", "Clean layout with standard documentation", "No deceptive prompts"],
+        checks_performed: ["Inspected content", "Checked for interactive forms"],
+        unknowns: ["Platform hosting means shared infrastructure"],
+        overall_observation: "Documentation site hosted on Vercel.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    const platformFinding = report.evidenceItems.find((f) => f.label === "User-Hosted Content Platform");
+    expect(platformFinding).toBeDefined();
+    expect(platformFinding?.kind).toBe("neutral");
+    expect(platformFinding?.provenance).toBe("url_structure");
+    expect(platformFinding?.detail).toMatch(/Vercel/i);
+    expect(report.missingEvidence.some((m) => m.includes("user-hosted platform"))).toBe(true);
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to my-docs-app.vercel.app.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+
+  it("Test 2: A Vercel-hosted page displaying an unverified password form triggers warning and Suspicious verdict", () => {
+    const url = new URL("https://unverified-portal.vercel.app/login");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Vercel-hosted landing page asking for username and password credentials.",
+      structuredResult: {
+        page_title: "Member Login Portal",
+        observed_final_url: "https://unverified-portal.vercel.app/login",
+        claimed_organization: undefined,
+        visible_purpose: "User authentication",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS active"],
+        checks_performed: ["Form inspection"],
+        unknowns: [],
+        overall_observation: "Password field observed on user-hosted Vercel app.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.evidenceItems.some((f) => f.label === "User-Hosted Content Platform")).toBe(true);
+    const credWarning = report.evidenceItems.find((f) => f.label === "Credential or Payment Input Form Observed");
+    expect(credWarning).toBeDefined();
+    expect(credWarning?.kind).toBe("warning");
+    expect(report.warningSigns.includes("Credential or Payment Input Form Observed")).toBe(true);
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered on this user-hosted page will be received by an individual account holder/i);
+  });
+
+  it("Test 3: A Vercel-hosted page with genuine deceptive warnings and brand impersonation triggers warnings", () => {
+    const url = new URL("https://vercel-security-team.vercel.app/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Page claims to represent Vercel corporate but uses artificial urgency.",
+      structuredResult: {
+        page_title: "Vercel Security Alert",
+        observed_final_url: "https://vercel-security-team.vercel.app/",
+        claimed_organization: "Vercel",
+        visible_purpose: "Security alert portal",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Account will be suspended within 24 hours if unverified"],
+        positive_signals: [],
+        checks_performed: ["Security check"],
+        unknowns: [],
+        overall_observation: "Deceptive urgency observed claiming to be Vercel.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    const mismatchFinding = report.evidenceItems.find((f) => f.label === "Branding vs Domain Discrepancy");
+    expect(mismatchFinding).toBeDefined();
+    expect(mismatchFinding?.kind).toBe("warning");
+    expect(report.warningSigns.length).toBeGreaterThan(0);
+    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
+  });
+
+  it("Test 4: An investigation failure on a Vercel-hosted domain correctly yields Unknown", () => {
+    const url = new URL("https://broken-app.vercel.app/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: false,
+      goalFailed: true,
+      errorMessage: "Navigation error: host unreachable or DNS resolution failure",
+      eventsCount: 1,
+      rawAgentText: "",
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.outcomeReason).toMatch(/could not be completed/i);
+    expect(report.missingEvidence.includes("Complete live page inspection could not be finished.")).toBe(true);
+  });
+
+  it("Test 5: https://aheadguard-ai.vercel.app assessed from actual production observations yields Low Observed Risk without hardcoding", () => {
+    const url = new URL("https://aheadguard-ai.vercel.app");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 8,
+      rawAgentText: JSON.stringify(
+        {
+          page_title: "AheadGuard AI — Pre-Action Digital Safety Guardian",
+          observed_final_url: "https://aheadguard-ai.vercel.app/",
+          claimed_organization: "AheadGuard AI",
+          visible_purpose: "A digital safety and security investigation tool that allows users to enter a destination URL or message for pre-action analysis. The site claims to use a 'TinyFish Engine' to investigate unknown destinations, identify phishing traps, and provide evidence-backed safety verdicts before users interact with links. It operates as a read-only isolation sandbox.",
+          credential_or_payment_request: false,
+          login_form_observed: false,
+          password_field_observed: false,
+          payment_field_observed: false,
+          download_or_permission_request: false,
+          observed_warning_signs: [],
+          positive_signals: [
+            "HTTPS connection active",
+            "URL is served from Vercel (vercel.app domain)",
+            "No login, password, or payment fields rendered",
+            "No download prompts or browser permission requests",
+            "Page emphasizes read-only isolation and local data storage",
+            "Transparent branding with clear company name displayed",
+          ],
+          checks_performed: [
+            "Visited target URL and recorded final URL and domain",
+            "Inspected page title from browser tab",
+            "Identified claimed organization from visible branding",
+            "Examined visible purpose and content description of the page",
+            "Checked for credential, password, and payment request fields",
+            "Verified no active login form is rendered on page",
+            "Checked for download prompts or permission dialogs",
+            "Scanned for warning signs (lookalike domains, countdown timers, urgency tactics)",
+            "Noted positive security indicators (HTTPS, clean domain, read-only claims)",
+            "Documented unknowns and limitations",
+          ],
+          unknowns: [
+            "Certificate authority and validity not explicitly verified",
+            "Vercel hosting means shared infrastructure — no dedicated domain ownership verification possible",
+            "Footer navigation links are minimal or not fully accessible for deeper site mapping",
+            "TinyFish Engine claims are unverified — no third-party security audit or certification visible",
+            "No information about data retention, privacy policy, or terms of service was directly observable on the main page",
+          ],
+          overall_observation: "AheadGuard AI (hosted at aheadguard-ai.vercel.app) presents as a pre-action digital safety guardian tool that allows users to analyze URLs or messages in an isolated sandbox before interacting with them. The page uses HTTPS, displays clear branding as AheadGuard AI, and does not request credentials, passwords, or payments. No login form, password field, payment field, download prompt, or permission request is visible on the page. No active warning signs (such as lookalike domains, countdown timers, or urgency tactics) were observed. The site claims to be a read-only security investigation tool powered by a 'TinyFish Engine.' However, as this is hosted on Vercel's shared platform rather than a dedicated branded domain, and no independent security certifications or audit reports are visible, these claims remain unverified. The absence of warning signs does not constitute confirmation of legitimacy.",
+        },
+        null,
+        2
+      ),
+      structuredResult: {
+        page_title: "AheadGuard AI — Pre-Action Digital Safety Guardian",
+        observed_final_url: "https://aheadguard-ai.vercel.app/",
+        claimed_organization: "AheadGuard AI",
+        visible_purpose: "A digital safety and security investigation tool that allows users to enter a destination URL or message for pre-action analysis. The site claims to use a 'TinyFish Engine' to investigate unknown destinations, identify phishing traps, and provide evidence-backed safety verdicts before users interact with links. It operates as a read-only isolation sandbox.",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "HTTPS connection active",
+          "URL is served from Vercel (vercel.app domain)",
+          "No login, password, or payment fields rendered",
+          "No download prompts or browser permission requests",
+          "Page emphasizes read-only isolation and local data storage",
+          "Transparent branding with clear company name displayed",
+        ],
+        checks_performed: [
+          "Visited target URL and recorded final URL and domain",
+          "Inspected page title from browser tab",
+          "Identified claimed organization from visible branding",
+          "Examined visible purpose and content description of the page",
+          "Checked for credential, password, and payment request fields",
+          "Verified no active login form is rendered on page",
+          "Checked for download prompts or permission dialogs",
+          "Scanned for warning signs (lookalike domains, countdown timers, urgency tactics)",
+          "Noted positive security indicators (HTTPS, clean domain, read-only claims)",
+          "Documented unknowns and limitations",
+        ],
+        unknowns: [
+          "Certificate authority and validity not explicitly verified",
+          "Vercel hosting means shared infrastructure — no dedicated domain ownership verification possible",
+          "Footer navigation links are minimal or not fully accessible for deeper site mapping",
+          "TinyFish Engine claims are unverified — no third-party security audit or certification visible",
+          "No information about data retention, privacy policy, or terms of service was directly observable on the main page",
+        ],
+        overall_observation: "AheadGuard AI (hosted at aheadguard-ai.vercel.app) presents as a pre-action digital safety guardian tool that allows users to analyze URLs or messages in an isolated sandbox before interacting with them. The page uses HTTPS, displays clear branding as AheadGuard AI, and does not request credentials, passwords, or payments. No login form, password field, payment field, download prompt, or permission request is visible on the page. No active warning signs (such as lookalike domains, countdown timers, or urgency tactics) were observed. The site claims to be a read-only security investigation tool powered by a 'TinyFish Engine.' However, as this is hosted on Vercel's shared platform rather than a dedicated branded domain, and no independent security certifications or audit reports are visible, these claims remain unverified. The absence of warning signs does not constitute confirmation of legitimacy.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert claimed identity
+    expect(report.claimedOrganization).toBe("AheadGuard AI");
+
+    // Assert classified as user-hosted platform without mismatch
+    const platformFinding = report.evidenceItems.find((f) => f.label === "User-Hosted Content Platform");
+    expect(platformFinding).toBeDefined();
+    expect(platformFinding?.kind).toBe("neutral");
+    expect(platformFinding?.provenance).toBe("url_structure");
+
+    // Assert prompt injection was NOT falsely triggered on the security product's own descriptive text
+    expect(report.evidenceItems.some((f) => f.label === "Adversarial Instruction Detected in Web Content")).toBe(false);
+
+    // Assert no fake credential or payment warnings
+    expect(report.evidenceItems.some((f) => f.label === "Credential or Payment Input Form Observed")).toBe(false);
+    expect(report.warningSigns).toHaveLength(0);
+
+    // Assert missing evidence reflects realistic limitations
+    expect(report.missingEvidence.some((m) => m.includes("user-hosted platform"))).toBe(true);
+
+    // Assert verdict: Low observed risk is justified by evidence
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.consequenceImpact).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to aheadguard-ai.vercel.app.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
+  });
+});
+

@@ -55,9 +55,11 @@ const SUSPICIOUS_SIGNALS = [
 // Adversarial prompt injection markers in web content
 const PROMPT_INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions/i,
-  /aheadguard.*(safe|verified|allow|bypass)/i,
-  /declare\s+(this\s+site\s+)?low\s+observed\s+risk/i,
-  /system\s+prompt\s*:/i,
+  /aheadguard\b[^\n\r]{0,40}\b(?:please\s+)?(?:declare|mark|classify|rate|treat|report|say)\b[^\n\r]{0,40}\b(?:as\s+)?(?:safe|verified|clean|trusted|low\s+observed\s+risk)\b/i,
+  /aheadguard\b[^\n\r]{0,40}\b(?:bypass|override|disable|skip|whitelist|allow\s+(?:this|all|domain|site|url))\b/i,
+  /\b(?:instruction\s+for|prompt\s+for)\s+aheadguard\b/i,
+  /declare\s+(this\s+site\s+|destination\s+)?(low\s+observed\s+risk|safe|verified)\b/i,
+  /system\s+(prompt|instruction)\s*:/i,
   /you\s+are\s+now\s+in\s+developer\s+mode/i,
   /override\s+security\s+verdict/i,
 ];
@@ -190,6 +192,12 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     approvedDomains: ["wellsfargo.com"],
     affiliatedAuthDomains: [],
   },
+  vercel: {
+    canonicalName: "Vercel",
+    aliases: ["vercel", "vercel inc"],
+    approvedDomains: ["vercel.com"],
+    affiliatedAuthDomains: [],
+  },
 };
 
 /**
@@ -222,7 +230,7 @@ export function isHostedPaymentDestination(hostname: string): boolean {
 }
 
 /**
- * Checks whether a given hostname is a user-hosted content / pages platform (e.g. GitHub Pages).
+ * Checks whether a given hostname is a user-hosted content / application platform (e.g. GitHub Pages, Vercel).
  */
 export function isUserHostedPlatform(hostname: string): boolean {
   if (!hostname) return false;
@@ -233,7 +241,11 @@ export function isUserHostedPlatform(hostname: string): boolean {
     h === "gitlab.io" ||
     h.endsWith(".gitlab.io") ||
     h === "pages.dev" ||
-    h.endsWith(".pages.dev")
+    h.endsWith(".pages.dev") ||
+    h === "vercel.app" ||
+    h.endsWith(".vercel.app") ||
+    h === "now.sh" ||
+    h.endsWith(".now.sh")
   );
 }
 
@@ -993,7 +1005,7 @@ export function assessInvestigation(params: {
     evidenceItems.push({
       label: "User-Hosted Content Platform",
       detail:
-        `The destination (${submittedHost}) is hosted on a user-generated content platform (e.g. GitHub Pages). The hosting platform domain does not prove the identity of the page owner.`,
+        `The destination (${submittedHost}) is hosted on a user-generated content platform or cloud hosting service (e.g. GitHub Pages, Vercel). The hosting platform domain does not prove the identity of the page owner.`,
       kind: "neutral",
       provenance: "url_structure",
     });
