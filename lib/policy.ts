@@ -676,9 +676,13 @@ export function generateActionPreview(
       riskFactors.push("Destination provides an authentic account sign-in option.");
     } else if (hasImpersonation || hasPhishingThreat) {
       riskFactors.push("Destination prompts for account credentials on a suspicious or impersonated domain.");
+    } else if (isHostedPayment) {
+      riskFactors.push("Destination requests payment transfer details for an unverified recipient account.");
     } else {
       riskFactors.push("Destination prompts for account credentials on an unverified destination.");
     }
+  } else if (isHostedPayment) {
+    riskFactors.push("Destination is a hosted payment link where recipient identity requires independent confirmation.");
   }
 
   // 2. Proposed Action
@@ -1053,6 +1057,18 @@ export function assessInvestigation(params: {
       };
       evidenceItems.push(item);
       warningSigns.push(item.label);
+    } else if (isHostedPayment && !hasPasswordField) {
+      // Hosted payment input on hosted payment destination (e.g. PayPal.Me transfer amount)
+      evidenceItems.push({
+        label: "Hosted Payment Form Observed",
+        detail:
+          "The page provides a payment transfer form on hosted platform paypal.me. Payment will be directed to the recipient account holder.",
+        kind: "neutral",
+        provenance: "browser_observation",
+      });
+      // Neutral finding: not added to warningSigns, because standard payment inputs on a payment platform are not fraud.
+      // However, because isHostedPayment is true, Rule 4 will not grant Low observed risk.
+      // It will resolve to Unknown because recipient identity is unverified.
     } else {
       // Credential prompt on unverified destination
       const item: Finding = {
@@ -1238,7 +1254,14 @@ export function assessInvestigation(params: {
     outcomeReason = `Observed ${warningSigns.length} meaningful warning sign(s) requiring caution: ${warningSigns.slice(0, 3).join("; ")}.`;
     recommendedAction = "Pause and verify. Do not enter credentials or complete financial transactions without independent confirmation.";
   }
-  // Policy Rule 4: Low Observed Risk (Strict conditions: passed checks, positive signals, 0 warnings, verified domain/clean redirect)
+  // Policy Rule 4: Low Observed Risk
+  // Strictly requires passed checks, positive signals, 0 warning signs, clean transport/redirection,
+  // and no unverified high-consequence prompts (credentials, payments, or downloads).
+  // Critical identity verification cannot be bypassed by positive signals alone when that verification
+  // is necessary for the action being assessed (e.g. hosted payment destinations like PayPal.Me where
+  // recipient identity is unverified).
+  // For ordinary informational content (including benign user-hosted content without credential/payment prompts),
+  // positive signals and the absence of deceptive indicators justify Low observed risk.
   else if (
     (agentPositives.length >= 1 || brandAffiliation.isOfficialDomain) &&
     warningSigns.length === 0 &&
@@ -1247,7 +1270,10 @@ export function assessInvestigation(params: {
     !isNumericIp &&
     (!destinationChanged || isAffiliatedRedirection(submittedHost, finalHost || submittedHost)) &&
     !observedFacts.downloadOrPermissionRequest &&
-    (!observedFacts.credentialOrPaymentRequest || brandAffiliation.isOfficialDomain)
+    (!observedFacts.credentialOrPaymentRequest || brandAffiliation.isOfficialDomain) &&
+    (!observedFacts.hasPasswordField || brandAffiliation.isOfficialDomain) &&
+    (!observedFacts.hasPaymentField || brandAffiliation.isOfficialDomain) &&
+    !isHostedPayment
   ) {
     riskOutcome = "Low observed risk";
     threatLikelihood = "Low";
@@ -1259,13 +1285,22 @@ export function assessInvestigation(params: {
       "Standard checks passed without observed warning signs. Note: this reflects the checks performed and is not a guarantee of safety.";
     recommendedAction = "Proceed with normal digital hygiene. Always confirm the domain in your address bar before entering sensitive details.";
   }
-  // Policy Rule 5: Fallback to Unknown if insufficient positive proof
+  // Policy Rule 5: Fallback to Unknown if insufficient positive proof or unresolved critical verification
   else {
     riskOutcome = "Unknown";
     threatLikelihood = "Uncertain";
-    outcomeReason = "Evidence is insufficient for a conclusive verdict. No severe threats were confirmed, but positive verification is incomplete.";
-    recommendedAction = "Verify the organization independently before sharing personal or sensitive information.";
-    missingEvidence.push("Independent third-party verification of domain ownership.");
+    if (isHostedPayment) {
+      outcomeReason =
+        "The destination is a hosted payment link (paypal.me) where the recipient identity has not been independently verified. Positive platform signals do not substitute for recipient verification.";
+      recommendedAction =
+        "Verify the recipient's identity through an independent, trusted channel before transferring funds.";
+    } else {
+      outcomeReason =
+        "Evidence is insufficient for a conclusive verdict. No severe threats were confirmed, but positive verification is incomplete.";
+      recommendedAction =
+        "Verify the organization independently before sharing personal or sensitive information.";
+      missingEvidence.push("Independent third-party verification of domain ownership.");
+    }
   }
 
   // 7. Action Preview Grounding

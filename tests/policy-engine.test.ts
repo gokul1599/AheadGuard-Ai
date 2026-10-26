@@ -564,276 +564,6 @@ describe("False-Positive Elimination & Grounded Policy Hardening (Scenarios 1 - 
   });
 });
 
-describe("Platform Services, User-Hosted Content & Unverified Credential Forms", () => {
-  it("Test 1: github.com is recognized as the official GitHub domain and not confused with user-hosted pages", () => {
-    const url = new URL("https://github.com/login");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 4,
-      rawAgentText: "Official GitHub corporate authentication portal.",
-      structuredResult: {
-        page_title: "Sign in to GitHub · GitHub",
-        observed_final_url: "https://github.com/login",
-        claimed_organization: "GitHub",
-        visible_purpose: "User authentication",
-        credential_or_payment_request: true,
-        login_form_observed: true,
-        password_field_observed: true,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: ["Official GitHub domain", "Valid TLS encryption"],
-        checks_performed: ["Domain ownership validation", "Sign-in form check"],
-        unknowns: [],
-        overall_observation: "Official GitHub sign-in page on official github.com domain.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    expect(report.claimedOrganization).toBe("GitHub");
-    // Assert configured brand registry match
-    const brandMatchFinding = report.evidenceItems.find((f) => f.label === "Matches Configured Brand Registry");
-    expect(brandMatchFinding).toBeDefined();
-    expect(brandMatchFinding?.kind).toBe("positive");
-    expect(brandMatchFinding?.provenance).toBe("policy_rule");
-    // Assert authentic sign-in form on official domain
-    const authFinding = report.evidenceItems.find((f) => f.label === "Authentic Sign-in Form Observed");
-    expect(authFinding).toBeDefined();
-    expect(authFinding?.kind).toBe("neutral");
-    expect(report.warningSigns).toHaveLength(0);
-    expect(report.riskOutcome).toBe("Low observed risk");
-    expect(report.consequenceImpact).toBe("High");
-    expect(report.threatLikelihood).toBe("Low");
-    expect(report.actionPreview.proposedAction).toBe("Submitting credentials on github.com.");
-    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials will be submitted to the official GitHub service/i);
-    expect(report.actionPreview.consequenceIfProceed).not.toMatch(/stolen by an unauthorized third party/i);
-  });
-
-  it("Test 2: someone.github.io is classified as a user-hosted platform page and not GitHub official domain", () => {
-    const url = new URL("https://developer-alice.github.io/my-library/");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 3,
-      rawAgentText: "Documentation site for an open-source JavaScript library.",
-      structuredResult: {
-        page_title: "MyLibrary Documentation",
-        observed_final_url: "https://developer-alice.github.io/my-library/",
-        claimed_organization: "MyLibrary Project",
-        visible_purpose: "Software documentation",
-        credential_or_payment_request: false,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: ["Valid HTTPS encryption", "Educational documentation content"],
-        checks_performed: ["Inspected content", "Checked for interactive forms"],
-        unknowns: [],
-        overall_observation: "Personal project documentation hosted on GitHub Pages.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    // Assert it is classified as a user-hosted platform
-    const platformFinding = report.evidenceItems.find((f) => f.label === "User-Hosted Content Platform");
-    expect(platformFinding).toBeDefined();
-    expect(platformFinding?.kind).toBe("neutral");
-    expect(platformFinding?.provenance).toBe("url_structure");
-    expect(platformFinding?.detail).toContain("user-generated content platform");
-    // Assert it does NOT match GitHub's corporate brand registry
-    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(false);
-    expect(report.missingEvidence.some((m) => m.includes("user-hosted platform"))).toBe(true);
-    expect(report.warningSigns).toHaveLength(0);
-    expect(report.riskOutcome).toBe("Low observed risk");
-  });
-
-  it("Test 3: someone.github.io falsely claiming GitHub corporate branding triggers Branding vs Domain Discrepancy", () => {
-    const url = new URL("https://github-auth-support.github.io/");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 4,
-      rawAgentText: "Page hosted on GitHub Pages claims to be official GitHub Support.",
-      structuredResult: {
-        page_title: "GitHub Support & Verification",
-        observed_final_url: "https://github-auth-support.github.io/",
-        claimed_organization: "GitHub",
-        visible_purpose: "Corporate support portal",
-        credential_or_payment_request: false,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: [],
-        checks_performed: ["Claimed identity check"],
-        unknowns: [],
-        overall_observation: "User-hosted GitHub Pages site claiming to represent GitHub corporate.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    // Assert discrepancy warning
-    const mismatchFinding = report.evidenceItems.find((f) => f.label === "Branding vs Domain Discrepancy");
-    expect(mismatchFinding).toBeDefined();
-    expect(mismatchFinding?.kind).toBe("warning");
-    expect(mismatchFinding?.provenance).toBe("policy_rule");
-    expect(mismatchFinding?.detail).toMatch(/user-hosted site.*github\.io.*not the official corporate domain.*github\.com/i);
-    expect(report.warningSigns.includes("Branding vs Domain Discrepancy")).toBe(true);
-    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
-  });
-
-  it("Test 4: Credential form on user-hosted someone.github.io triggers warning for unverified credential prompt and Suspicious verdict", () => {
-    const url = new URL("https://phish-test.github.io/login");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 4,
-      rawAgentText: "User-hosted page rendering an active username and password login form.",
-      structuredResult: {
-        page_title: "Account Sign In",
-        observed_final_url: "https://phish-test.github.io/login",
-        claimed_organization: undefined,
-        visible_purpose: "User authentication",
-        credential_or_payment_request: true,
-        login_form_observed: true,
-        password_field_observed: true,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: [],
-        checks_performed: ["Observed password input form"],
-        unknowns: [],
-        overall_observation: "Credential input form hosted on GitHub Pages.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    // Must NOT be treated as authentic GitHub sign-in form
-    expect(report.evidenceItems.some((f) => f.label === "Authentic Sign-in Form Observed")).toBe(false);
-    // Must trigger credential warning on unverified destination
-    const credWarning = report.evidenceItems.find((f) => f.label === "Credential or Payment Input Form Observed");
-    expect(credWarning).toBeDefined();
-    expect(credWarning?.kind).toBe("warning");
-    expect(credWarning?.provenance).toBe("browser_observation");
-    expect(report.warningSigns.includes("Credential or Payment Input Form Observed")).toBe(true);
-    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
-    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered.*may be captured by an unverified destination|user-hosted/i);
-  });
-
-  it("Test 5: paypal.com is recognized as the official corporate PayPal domain", () => {
-    const url = new URL("https://www.paypal.com/signin");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 4,
-      rawAgentText: "Official PayPal authentication portal.",
-      structuredResult: {
-        page_title: "Log in to your PayPal account",
-        observed_final_url: "https://www.paypal.com/signin",
-        claimed_organization: "PayPal",
-        visible_purpose: "User authentication",
-        credential_or_payment_request: true,
-        login_form_observed: true,
-        password_field_observed: true,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: ["Official PayPal domain", "Valid TLS certificate"],
-        checks_performed: ["Domain ownership validation", "Sign-in form check"],
-        unknowns: [],
-        overall_observation: "Official PayPal sign-in page on official paypal.com domain.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    expect(report.claimedOrganization).toBe("PayPal");
-    const brandMatch = report.evidenceItems.find((f) => f.label === "Matches Configured Brand Registry");
-    expect(brandMatch).toBeDefined();
-    expect(brandMatch?.kind).toBe("positive");
-    const authFinding = report.evidenceItems.find((f) => f.label === "Authentic Sign-in Form Observed");
-    expect(authFinding).toBeDefined();
-    expect(authFinding?.kind).toBe("neutral");
-    expect(report.warningSigns).toHaveLength(0);
-    expect(report.riskOutcome).toBe("Low observed risk");
-    expect(report.consequenceImpact).toBe("High");
-    expect(report.threatLikelihood).toBe("Low");
-    expect(report.actionPreview.proposedAction).toBe("Submitting credentials on www.paypal.com.");
-    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials will be submitted to the official PayPal service/i);
-  });
-
-  it("Test 6: paypal.me is classified as a hosted payment destination without automatic safe or malicious verdict", () => {
-    const url = new URL("https://paypal.me/freelance_fund");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 3,
-      rawAgentText: "PayPal.Me personal profile payment link.",
-      structuredResult: {
-        page_title: "Pay Freelance Fund with PayPal.Me",
-        observed_final_url: "https://paypal.me/freelance_fund",
-        claimed_organization: "PayPal",
-        visible_purpose: "Peer-to-peer payment profile",
-        credential_or_payment_request: false,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: ["Valid TLS certificate", "Hosted on PayPal payment infrastructure"],
-        checks_performed: ["Profile check", "Payment link check"],
-        unknowns: [],
-        overall_observation: "Hosted payment link on PayPal.Me.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    // Assert classified as hosted payment destination
-    const hostedPaymentFinding = report.evidenceItems.find((f) => f.label === "Hosted Payment Destination");
-    expect(hostedPaymentFinding).toBeDefined();
-    expect(hostedPaymentFinding?.kind).toBe("neutral");
-    expect(hostedPaymentFinding?.provenance).toBe("url_structure");
-    // Assert it does NOT claim to be PayPal corporate official domain
-    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(false);
-    expect(report.missingEvidence.some((m) => m.includes("recipient account owner"))).toBe(true);
-    // Not automatically declared safe; not automatically declared malicious
-    expect(report.riskOutcome).toBe("Low observed risk");
-    expect(report.warningSigns).toHaveLength(0);
-  });
-
-  it("Test 7: Credential form on unverified third-party destination triggers credential warning and Suspicious verdict", () => {
-    const url = new URL("https://portal-unverified-login.org/account");
-    const tinyFishResult: TinyFishExecutionResult = {
-      success: true,
-      goalFailed: false,
-      eventsCount: 4,
-      rawAgentText: "Unverified domain presenting a login form asking for user credentials.",
-      structuredResult: {
-        page_title: "Member Portal Login",
-        observed_final_url: "https://portal-unverified-login.org/account",
-        claimed_organization: undefined,
-        visible_purpose: "User authentication",
-        credential_or_payment_request: true,
-        login_form_observed: true,
-        password_field_observed: true,
-        download_or_permission_request: false,
-        observed_warning_signs: [],
-        positive_signals: [],
-        checks_performed: ["Credential form inspection"],
-        unknowns: [],
-        overall_observation: "Login form on unverified third-party portal.",
-      },
-    };
-
-    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
-
-    // Must trigger credential warning on unverified destination
-    const credWarning = report.evidenceItems.find((f) => f.label === "Credential or Payment Input Form Observed");
-    expect(credWarning).toBeDefined();
-    expect(credWarning?.kind).toBe("warning");
-    expect(credWarning?.provenance).toBe("browser_observation");
-    expect(report.warningSigns.includes("Credential or Payment Input Form Observed")).toBe(true);
-    expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
-    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered may be captured by an unverified destination/i);
-  });
-});
-
 describe("Production Investigation Hardening & False-Positive Elimination (12 Required Scenarios)", () => {
   it("Test 1: example.com is not classified as an official IANA brand domain", () => {
     const url = new URL("https://example.com/");
@@ -1324,8 +1054,8 @@ describe("Production Investigation Hardening & False-Positive Elimination (12 Re
   });
 });
 
-describe("Platform Services, User-Hosted Content & Unverified Credential Forms", () => {
-  it("Test 1: github.com is recognized as the official GitHub domain and not confused with user-hosted pages", () => {
+describe("Platform Services, User-Hosted Content, Hosted Payment & Unknown Verification Audits", () => {
+  it("Test 1: github.com is recognized as the official corporate GitHub domain", () => {
     const url = new URL("https://github.com/login");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1370,7 +1100,7 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(report.actionPreview.consequenceIfProceed).not.toMatch(/stolen by an unauthorized third party/i);
   });
 
-  it("Test 2: someone.github.io is classified as a user-hosted platform page and not GitHub official domain", () => {
+  it("Test 2: An ordinary GitHub Pages site without credential prompts produces Low Observed Risk", () => {
     const url = new URL("https://developer-alice.github.io/my-library/");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1405,9 +1135,12 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(report.missingEvidence.some((m) => m.includes("user-hosted platform"))).toBe(true);
     expect(report.warningSigns).toHaveLength(0);
     expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.actionPreview.proposedAction).toBe("Navigating to developer-alice.github.io.");
+    expect(report.actionPreview.consequenceIfProceed).toBe("Routine web browsing with no special actions requested.");
   });
 
-  it("Test 3: someone.github.io falsely claiming GitHub corporate branding triggers Branding vs Domain Discrepancy", () => {
+  it("Test 3: A user-hosted page falsely claiming to be GitHub triggers Branding vs Domain Discrepancy", () => {
     const url = new URL("https://github-auth-support.github.io/");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1441,7 +1174,7 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
   });
 
-  it("Test 4: Credential form on user-hosted someone.github.io triggers warning for unverified credential prompt and Suspicious verdict", () => {
+  it("Test 4: A GitHub Pages site with a password field triggers warning and Suspicious verdict", () => {
     const url = new URL("https://phish-test.github.io/login");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1476,10 +1209,10 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(credWarning?.provenance).toBe("browser_observation");
     expect(report.warningSigns.includes("Credential or Payment Input Form Observed")).toBe(true);
     expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
-    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered.*may be captured by an unverified destination|user-hosted/i);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered on this user-hosted page will be received by an individual account holder/i);
   });
 
-  it("Test 5: paypal.com is recognized as the official corporate PayPal domain", () => {
+  it("Test 5: An official paypal.com sign-in form is recognized as corporate PayPal and yields Low Observed Risk", () => {
     const url = new URL("https://www.paypal.com/signin");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1520,7 +1253,7 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials will be submitted to the official PayPal service/i);
   });
 
-  it("Test 6: paypal.me is classified as a hosted payment destination without automatic safe or malicious verdict", () => {
+  it("Test 6: An unverified PayPal.Me recipient with positive page signals yields Unknown outcome", () => {
     const url = new URL("https://paypal.me/freelance_fund");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1552,12 +1285,63 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     // Assert it does NOT claim to be PayPal corporate official domain
     expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(false);
     expect(report.missingEvidence.some((m) => m.includes("recipient account owner"))).toBe(true);
-    // Not automatically declared safe; not automatically declared malicious
-    expect(report.riskOutcome).toBe("Low observed risk");
+    // Recipient identity is unverified: MUST yield Unknown, NOT Low observed risk, NOT Suspicious/High risk
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.consequenceImpact).toBe("Moderate");
     expect(report.warningSigns).toHaveLength(0);
+    expect(report.outcomeReason).toMatch(/recipient identity has not been independently verified/i);
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Routine browsing on a hosted payment profile page.*Confirm recipient details/i);
   });
 
-  it("Test 7: Credential form on unverified third-party destination triggers credential warning and Suspicious verdict", () => {
+  it("Test 7: A PayPal.Me page with an observed payment prompt yields Unknown outcome without fabricating fraud", () => {
+    const url = new URL("https://paypal.me/freelance_fund/25");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "PayPal.Me payment transfer page prompting to send $25.",
+      structuredResult: {
+        page_title: "Pay Freelance Fund $25 with PayPal.Me",
+        observed_final_url: "https://paypal.me/freelance_fund/25",
+        claimed_organization: "PayPal",
+        visible_purpose: "Peer-to-peer payment transfer",
+        credential_or_payment_request: true,
+        payment_field_observed: true,
+        password_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Valid TLS certificate", "Hosted on PayPal payment infrastructure"],
+        checks_performed: ["Payment field inspection"],
+        unknowns: [],
+        overall_observation: "Payment transfer prompt on PayPal.Me.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+
+    // Assert classified as hosted payment destination
+    const hostedPaymentFinding = report.evidenceItems.find((f) => f.label === "Hosted Payment Destination");
+    expect(hostedPaymentFinding).toBeDefined();
+    expect(hostedPaymentFinding?.kind).toBe("neutral");
+
+    // Assert hosted payment form finding is neutral, not treated as fraudulent credential harvesting
+    const formFinding = report.evidenceItems.find((f) => f.label === "Hosted Payment Form Observed");
+    expect(formFinding).toBeDefined();
+    expect(formFinding?.kind).toBe("neutral");
+
+    // Do NOT fabricate fraud or label malicious
+    expect(report.warningSigns).toHaveLength(0);
+
+    // Recipient is unverified -> outcome is Unknown
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.threatLikelihood).toBe("Uncertain");
+    expect(report.consequenceImpact).toBe("High");
+    expect(report.actionPreview.proposedAction).toBe("Submitting payment or transfer details on paypal.me.");
+    expect(report.actionPreview.consequenceIfProceed).toMatch(/Payment will be processed via hosted payment link.*Verify the intended recipient/i);
+  });
+
+  it("Test 8: Credential form on unverified third-party destination triggers credential warning and Suspicious verdict", () => {
     const url = new URL("https://portal-unverified-login.org/account");
     const tinyFishResult: TinyFishExecutionResult = {
       success: true,
@@ -1592,4 +1376,57 @@ describe("Platform Services, User-Hosted Content & Unverified Credential Forms",
     expect(["High risk", "Suspicious"]).toContain(report.riskOutcome);
     expect(report.actionPreview.consequenceIfProceed).toMatch(/Credentials entered may be captured by an unverified destination/i);
   });
+
+  it("Test 9: Unknown outcomes when investigation fails or critical evidence is unavailable", () => {
+    // Subcase A: Live probe failed to finish
+    const failUrl = new URL("https://unreachable-domain.com/");
+    const failedProbe: TinyFishExecutionResult = {
+      success: false,
+      goalFailed: true,
+      errorMessage: "Navigation timeout connecting to target host",
+      eventsCount: 1,
+      rawAgentText: "",
+    };
+    const failedReport = assessInvestigation({ submittedUrl: failUrl, tinyFishResult: failedProbe });
+    expect(failedReport.riskOutcome).toBe("Unknown");
+    expect(failedReport.threatLikelihood).toBe("Uncertain");
+    expect(failedReport.outcomeReason).toMatch(/could not be completed/i);
+
+    // Subcase B: Investigation goal failed
+    const goalFailResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: true,
+      errorMessage: "Agent goal could not be satisfied",
+      eventsCount: 3,
+      rawAgentText: "Target page unreachable",
+    };
+    const goalFailReport = assessInvestigation({ submittedUrl: failUrl, tinyFishResult: goalFailResult });
+    expect(goalFailReport.riskOutcome).toBe("Unknown");
+    expect(goalFailReport.threatLikelihood).toBe("Uncertain");
+
+    // Subcase C: Non-registered destination with 0 positive signals and inconclusive evidence (Policy Rule 5)
+    const emptyPositivesResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 2,
+      rawAgentText: "Empty page with no verified ownership",
+      structuredResult: {
+        page_title: "Blank Landing",
+        observed_final_url: "https://unknown-empty-portal.xyz/",
+        claimed_organization: undefined,
+        visible_purpose: "Placeholder",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [], // 0 positive signals
+        checks_performed: ["Standard probe"],
+        unknowns: ["Domain ownership unverified"],
+      },
+    };
+    const inconclusiveReport = assessInvestigation({ submittedUrl: new URL("https://unknown-empty-portal.xyz/"), tinyFishResult: emptyPositivesResult });
+    expect(inconclusiveReport.riskOutcome).toBe("Unknown");
+    expect(inconclusiveReport.threatLikelihood).toBe("Uncertain");
+    expect(inconclusiveReport.missingEvidence.some((m) => m.includes("verification of domain ownership"))).toBe(true);
+  });
 });
+
