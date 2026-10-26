@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AheadGuard AI — Pre-Action Digital Safety</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-shell">
+    <!-- Header -->
+    <header class="popup-topbar">
+      <div class="brand">
+        <svg class="brand-shield" viewBox="0 0 64 72" fill="none" aria-hidden="true">
+          <path d="M32 3 58 13v20c0 17-11 27-26 36C17 60 6 50 6 33V13L32 3Z" stroke="#00d2ff" stroke-width="3"/>
+          <path d="M32 12 49 18v15c0 12-7 19-17 25-10-6-17-13-17-25V18l17-6Z" fill="#00d2ff" fill-opacity=".15" stroke="#00d2ff" stroke-width="2"/>
+          <path d="m22 39 8-17 12 28" stroke="#00d2ff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div class="brand-text">
+          <div class="brand-title">AheadGuard <span class="brand-accent">AI</span></div>
+          <div class="brand-sub">PRE-ACTION SAFETY GUARDIAN</div>
+        </div>
+      </div>
+      <button id="settings-btn" class="icon-btn" title="Extension Settings" aria-label="Open settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+    </header>
+
+    <!-- Settings Drawer (Hidden by default) -->
+    <div id="settings-drawer" class="settings-drawer hidden" role="region" aria-label="Extension settings">
+      <div class="drawer-header">
+        <span>Privacy & Protection Settings</span>
+        <button id="close-settings" class="small-btn">Done</button>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Navigation Awareness</div>
+          <div class="setting-desc">Observe URLs to enable pre-action checks</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-monitoring" checked aria-label="Toggle Navigation Awareness">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Pause Evidence Ledger</div>
+          <div class="setting-desc">Do not save new checks in local history</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="toggle-pause-ledger" aria-label="Toggle Pause Evidence Ledger">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="setting-row">
+        <div>
+          <div class="setting-title">Local Backend Address</div>
+          <div class="setting-desc">Investigation engine endpoint</div>
+        </div>
+        <input type="text" id="backend-url-input" class="text-input small" value="http://localhost:3000" aria-label="Local backend address">
+      </div>
+      <div class="setting-actions">
+        <button id="clear-ledger-btn" class="danger-btn">Clear All Local History</button>
+      </div>
+    </div>
+
+    <!-- Active Tab Banner -->
+    <section class="tab-target-box">
+      <div class="target-overline">ACTIVE TAB DESTINATION</div>
+      <div id="active-url-display" class="target-url-text">Detecting active tab…</div>
+      <div id="unsupported-warning" class="unsupported-msg hidden">
+        Internal browser page. AheadGuard inspects public HTTP/HTTPS destinations.
+      </div>
+    </section>
+
+    <!-- Manual Check Input (Collapsible) -->
+    <section class="manual-check-box">
+      <div class="manual-toggle-row">
+        <span class="muted-label">CHECK BEFORE I ACT</span>
+        <button id="toggle-manual-input" class="link-btn">Check custom link</button>
+      </div>
+      <div id="custom-input-container" class="custom-input-container hidden">
+        <input type="text" id="custom-url-input" class="text-input" placeholder="Paste link or message containing URL…" aria-label="Custom link to check">
+      </div>
+      <button id="check-btn" class="primary-btn">
+        <span id="btn-spinner" class="spinner hidden"></span>
+        <span id="btn-text">Investigate Destination</span>
+      </button>
+    </section>
+
+    <!-- Progress Status Box (Shown during active investigation) -->
+    <div id="progress-container" class="progress-container hidden" role="status" aria-live="polite">
+      <div class="progress-pulse"></div>
+      <div id="progress-text" class="progress-text">Connecting to AheadGuard…</div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="result-container" class="result-container hidden">
+      <!-- Risk Outcome Card -->
+      <div id="risk-banner" class="risk-banner" role="region" aria-label="Risk assessment banner">
+        <div id="risk-icon" class="risk-icon">🛡️</div>
+        <div class="risk-info">
+          <div class="risk-overline-row">
+            <span class="badge-label">ASSESSMENT</span>
+            <span id="risk-likelihood-pill" class="pill">Likelihood: Moderate</span>
+          </div>
+          <h3 id="risk-title" class="risk-title">SUSPICIOUS</h3>
+          <p id="risk-summary" class="risk-summary">Observed warning signs requiring caution.</p>
+        </div>
+      </div>
+
+      <!-- Low Risk Disclaimer Callout -->
+      <div id="low-risk-disclaimer" class="low-risk-callout hidden">
+        <span><strong>Notice:</strong> Low observed risk indicates no active warning signals were found during this probe. It is not an absolute guarantee of safety.</span>
+      </div>
+
+      <!-- Action Preview -->
+      <div class="action-preview-card">
+        <div class="preview-head">
+          <span class="preview-tag">ACTION PREVIEW</span>
+          <span id="preview-proposed" class="preview-proposed">Submitting credentials</span>
+        </div>
+        <p id="preview-consequence" class="preview-consequence">Credentials entered may be stolen by an untrusted third party.</p>
+        <ul id="preview-factors" class="preview-factors"></ul>
+      </div>
+
+      <!-- Host & Redirects -->
+      <div class="meta-card">
+        <div class="meta-row">
+          <span class="meta-key">SUBMITTED HOST</span>
+          <strong id="meta-host" class="meta-val">example.com</strong>
+        </div>
+        <div id="redirect-warning" class="redirect-warning hidden">
+          <span class="warn-dot">!</span>
+          <span>Redirected to: <strong id="meta-final-host">different-domain.com</strong></span>
+        </div>
+      </div>
+
+      <!-- Evidence Highlights List -->
+      <div class="evidence-section">
+        <div class="section-title">Evidence & Findings (<span id="evidence-count">0</span>)</div>
+        <div id="evidence-list" class="evidence-list"></div>
+      </div>
+
+      <!-- Recommendation -->
+      <div class="recommendation-card">
+        <div class="rec-title">Recommended Next Step</div>
+        <p id="rec-text" class="rec-text">Pause and verify independently.</p>
+      </div>
+
+      <!-- Action Links -->
+      <div class="result-actions">
+        <a id="view-full-report" class="action-link primary" href="#" target="_blank">
+          View Full Evidence Report ↗
+        </a>
+        <button id="safe-navigate-btn" class="action-link secondary">
+          Return to Safety ←
+        </button>
+      </div>
+    </div>
+
+    <!-- History / Ledger Section -->
+    <section class="ledger-section">
+      <div class="section-title-row">
+        <span class="section-title">Recent Checks</span>
+        <span id="ledger-count" class="muted-label">0 records</span>
+      </div>
+      <div id="ledger-list" class="ledger-list">
+        <div class="empty-ledger">No recent investigations recorded.</div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="popup-footer">
+      <span>AheadGuard AI · Pre-Action Guardian</span>
+      <a id="open-web-app" href="http://localhost:3000" target="_blank">Open Web Dashboard ↗</a>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
