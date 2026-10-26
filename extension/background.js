@@ -343,6 +343,7 @@ function isValidBackendEndpoint(url) {
     if (parsed.username || parsed.password) return false;
     const host = parsed.hostname.toLowerCase();
     if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
     return false;
   } catch {
     return false;

@@ -338,16 +338,18 @@ describe("AheadGuard Chrome Extension Test Suite (Section 11: Tests 1 - 20)", ()
         if (parsed.username || parsed.password) return false;
         const host = parsed.hostname.toLowerCase();
         if (host === "localhost" || host === "127.0.0.1") return true;
+        if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
         return false;
       } catch {
         return false;
       }
     }
 
-    // Permitted local endpoints
+    // Permitted endpoints
     expect(isValidBackendEndpoint("http://localhost:3000")).toBe(true);
     expect(isValidBackendEndpoint("http://127.0.0.1:3000")).toBe(true);
     expect(isValidBackendEndpoint("http://localhost:8080")).toBe(true);
+    expect(isValidBackendEndpoint("https://aheadguard-ai.vercel.app")).toBe(true);
 
     // Blocked malicious/exfiltration endpoints
     expect(isValidBackendEndpoint("https://attacker-data-logger.com")).toBe(false);

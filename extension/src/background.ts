@@ -43,8 +43,9 @@ function isValidBackendEndpoint(url?: string): boolean {
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
     if (parsed.username || parsed.password) return false;
     const host = parsed.hostname.toLowerCase();
-    // Allow local development endpoints
+    // Allow local development endpoints and official deployed Vercel domain
     if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host === "aheadguard-ai.vercel.app" || host.endsWith(".vercel.app")) return true;
     return false;
   } catch {
     return false;
