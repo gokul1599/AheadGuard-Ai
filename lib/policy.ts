@@ -69,6 +69,8 @@ export interface BrandRegistryEntry {
   aliases: string[];
   approvedDomains: string[];
   affiliatedAuthDomains?: string[];
+  officialCareersUrl?: string;
+  officialContactUrl?: string;
 }
 
 /**
@@ -92,12 +94,15 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
       "google.co.jp",
     ],
     affiliatedAuthDomains: ["accounts.google.com"],
+    officialCareersUrl: "https://careers.google.com/",
+    officialContactUrl: "https://about.google/contact-google/",
   },
   youtube: {
     canonicalName: "YouTube",
     aliases: ["youtube", "youtube llc", "youtube video", "youtube music", "youtube - a google company"],
     approvedDomains: ["youtube.com", "youtu.be"],
     affiliatedAuthDomains: ["accounts.google.com", "google.com"],
+    officialCareersUrl: "https://careers.google.com/",
   },
   microsoft: {
     canonicalName: "Microsoft",
@@ -116,12 +121,16 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
       "login.live.com",
       "account.microsoft.com",
     ],
+    officialCareersUrl: "https://careers.microsoft.com/",
+    officialContactUrl: "https://support.microsoft.com/",
   },
   apple: {
     canonicalName: "Apple",
     aliases: ["apple", "apple inc"],
     approvedDomains: ["apple.com", "icloud.com"],
     affiliatedAuthDomains: ["appleid.apple.com"],
+    officialCareersUrl: "https://jobs.apple.com/",
+    officialContactUrl: "https://support.apple.com/",
   },
   amazon: {
     canonicalName: "Amazon",
@@ -137,24 +146,30 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
       "aws.amazon.com",
     ],
     affiliatedAuthDomains: ["signin.aws.amazon.com"],
+    officialCareersUrl: "https://www.amazon.jobs/",
+    officialContactUrl: "https://www.amazon.com/gp/help/customer/display.html",
   },
   paypal: {
     canonicalName: "PayPal",
     aliases: ["paypal", "paypal inc"],
     approvedDomains: ["paypal.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://careers.pypl.com/",
+    officialContactUrl: "https://www.paypal.com/smarthelp/contact-us",
   },
   meta: {
     canonicalName: "Meta",
     aliases: ["meta", "meta platforms", "facebook", "instagram", "whatsapp"],
     approvedDomains: ["meta.com", "facebook.com", "instagram.com", "whatsapp.com", "fb.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://www.metacareers.com/",
   },
   netflix: {
     canonicalName: "Netflix",
     aliases: ["netflix", "netflix inc"],
     approvedDomains: ["netflix.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://jobs.netflix.com/",
   },
   wikimedia: {
     canonicalName: "Wikimedia Foundation",
@@ -197,18 +212,23 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     aliases: ["capital one", "capitalone", "capital one bank", "capital one financial"],
     approvedDomains: ["capitalone.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://www.capitalonecareers.com/",
+    officialContactUrl: "https://www.capitalone.com/contact/",
   },
   citi: {
     canonicalName: "Citigroup (Citi)",
     aliases: ["citi", "citigroup", "citibank"],
     approvedDomains: ["citigroup.com", "citi.com", "citibank.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://careers.citigroup.com/",
   },
   stripe: {
     canonicalName: "Stripe",
     aliases: ["stripe", "stripe, llc", "stripe inc"],
     approvedDomains: ["stripe.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://stripe.com/jobs",
+    officialContactUrl: "https://support.stripe.com/",
   },
   venmo: {
     canonicalName: "Venmo",
@@ -221,12 +241,15 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     aliases: ["square", "squareup", "block, inc.", "block"],
     approvedDomains: ["squareup.com", "square.com", "block.xyz"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://careers.block.xyz/",
   },
   wise: {
     canonicalName: "Wise",
     aliases: ["wise", "transferwise", "wise payments"],
     approvedDomains: ["wise.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://wise.jobs/",
+    officialContactUrl: "https://wise.com/help",
   },
   gitlab: {
     canonicalName: "GitLab",
@@ -293,6 +316,8 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     aliases: ["linkedin", "linkedin corporation"],
     approvedDomains: ["linkedin.com"],
     affiliatedAuthDomains: [],
+    officialCareersUrl: "https://careers.linkedin.com/",
+    officialContactUrl: "https://www.linkedin.com/help",
   },
   x: {
     canonicalName: "X (Twitter)",

@@ -53,6 +53,150 @@ export interface ObservedDestination {
   redirectChain: string[];
 }
 
+// ==========================================
+// SCAM, JOB & IDENTITY VERIFICATION INTELLIGENCE
+// ==========================================
+
+export type ClaimEvaluation = "Supported" | "Contradicted" | "Unverified";
+
+export type ClaimCategory =
+  | "employer_identity"
+  | "job_role"
+  | "compensation"
+  | "recruitment_fee"
+  | "urgency"
+  | "sensitive_data"
+  | "contact_info"
+  | "guaranteed_hiring"
+  | "general_claim";
+
+export interface ClaimSourceReference {
+  title: string;
+  url: string;
+  sourceType:
+    | "official_corporate_site"
+    | "official_careers_page"
+    | "brand_registry"
+    | "user_provided_careers_url"
+    | "observed_destination"
+    | "external_source";
+  retrievedAt: string;
+  snippet?: string;
+}
+
+export interface ClaimRecord {
+  id: string;
+  category: ClaimCategory;
+  claimText: string;
+  claimedOrganization?: string;
+  evaluation: ClaimEvaluation;
+  explanation: string;
+  supportingSources?: ClaimSourceReference[];
+  sourceUrl?: string;
+  sourceType?: ClaimSourceReference["sourceType"] | "none";
+  provenance: "message_text" | "browser_observation" | "brand_registry" | "external_source" | "user_input";
+  retrievedAt: string;
+  limitations?: string;
+}
+
+export type CompanyIdentityStatus =
+  | "Official domain match"
+  | "Affiliated domain observed"
+  | "Third-party platform"
+  | "Identity mismatch"
+  | "Unverified identity";
+
+export interface CompanyIdentityVerification {
+  claimedOrganization?: string;
+  destinationHost?: string;
+  registrableDomain?: string;
+  status: CompanyIdentityStatus;
+  explanation: string;
+  isRegisteredBrand: boolean;
+  isOfficialCorporateDomain: boolean;
+  isThirdPartyPlatform: boolean;
+  platformName?: string;
+  officialDomains: string[];
+  officialCareersUrl?: string;
+  officialContactUrl?: string;
+  verifiedAt: string;
+  evidenceSources: ClaimSourceReference[];
+}
+
+export type JobVerificationStatus =
+  | "Listing matched"
+  | "Listing contradicted"
+  | "Listing not found — unverified"
+  | "Verification unavailable";
+
+export interface JobVerificationResult {
+  claimedRole?: string;
+  claimedEmployer?: string;
+  claimedLocation?: string;
+  claimedCompensation?: string;
+  recruiterContact?: string;
+  status: JobVerificationStatus;
+  explanation: string;
+  matchedListingUrl?: string;
+  checkedSources: ClaimSourceReference[];
+  verifiedAt: string;
+  limitations: string;
+}
+
+export interface RecruitmentFeeWarning {
+  detected: boolean;
+  feeType?: "application_fee" | "security_deposit" | "training_fee" | "equipment_fee" | "interview_fee" | "unspecified_fee";
+  quotedText: string;
+  explanation: string;
+  riskLevel: "High" | "Moderate";
+}
+
+export interface PaymentRiskItem {
+  id: string;
+  paymentType: "fee_for_job" | "security_deposit" | "advance_payment" | "urgent_fee" | "p2p_transfer" | "inconsistent_method";
+  quotedText: string;
+  claimedRecipient?: string;
+  cautionReason: string;
+  destinationInvestigated: boolean;
+  evidenceSummary: string;
+  recommendedVerificationStep: string;
+}
+
+export interface SensitiveDataRequestItem {
+  id: string;
+  dataCategory: "password" | "otp_2fa" | "card_details" | "bank_account" | "government_id" | "personal_documents";
+  source: "message_text_request" | "form_observed" | "input_field_observed" | "informational_mention";
+  quotedText?: string;
+  riskExplanation: string;
+  isDestinationVerified: boolean;
+}
+
+export interface IndependentVerificationRoute {
+  routeType: "official_careers_page" | "corporate_contact_page" | "official_homepage" | "support_portal" | "verified_job_board";
+  title: string;
+  url?: string;
+  isIndependentlyEstablished: boolean;
+  relevanceExplanation: string;
+  verifiableClaims: string[];
+  limitations: string;
+}
+
+export interface ScamIntelligence {
+  analysisMode: "link" | "message" | "job" | "report";
+  messageExcerpt?: string;
+  extractedUrls: string[];
+  selectedTargetUrl?: string;
+  companyIdentity: CompanyIdentityVerification;
+  jobVerification?: JobVerificationResult;
+  recruitmentFeeWarning?: RecruitmentFeeWarning;
+  paymentRisks: PaymentRiskItem[];
+  sensitiveDataRequests: SensitiveDataRequestItem[];
+  claims: ClaimRecord[];
+  independentVerificationRoutes: IndependentVerificationRoute[];
+  privacyRedactionsApplied: string[];
+  disclaimer: string;
+}
+
 export interface InvestigationReport {
   investigationId: string;
   timestamp: string;
@@ -76,6 +220,11 @@ export interface InvestigationReport {
   replayUrl?: string;
   rawAgentOutput?: string;
   eventsCount: number;
+  // Extended scam & trust intelligence
+  scamIntelligence?: ScamIntelligence;
+  extractedUrls?: string[];
+  selectedTargetUrl?: string;
+  analysisMode?: "link" | "message" | "job" | "report";
 }
 
 export interface ProgressEvent {
@@ -87,7 +236,15 @@ export interface ProgressEvent {
   error?: string;
 }
 
-// Zod schema for input validation
+// Zod schemas for input validation
 export const InputSchema = z.object({
-  input: z.string().trim().min(4, "Please enter a valid URL or a message containing a URL.").max(4000),
+  input: z.string().trim().min(4, "Please enter a valid URL or message.").max(10000),
+  messageText: z.string().trim().max(10000).optional(),
+  targetUrl: z.string().trim().max(2048).optional(),
+  claimedOrganization: z.string().trim().max(200).optional(),
+  claimedJobRole: z.string().trim().max(200).optional(),
+  officialCareersUrl: z.string().trim().max(2048).optional(),
+  analysisMode: z.enum(["link", "message", "job", "report"]).optional(),
 });
+
+export type InvestigationRequest = z.infer<typeof InputSchema>;

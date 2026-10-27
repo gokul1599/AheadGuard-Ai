@@ -3,7 +3,10 @@ import { InputSchema } from "@/lib/types";
 import { validateAndNormalizeUrl } from "@/lib/url-safety";
 import { executeTinyFishInvestigation } from "@/lib/tinyfish";
 import { assessInvestigation } from "@/lib/policy";
-import type { ProgressEvent } from "@/lib/types";
+import { analyzeMessageText } from "@/lib/message-intelligence";
+import { verifyCompanyIdentity, verifyJobListing } from "@/lib/company-verification";
+import { enrichReportWithScamIntelligence, createTextOnlyReport } from "@/lib/claims-evaluator";
+import type { ProgressEvent, InvestigationReport } from "@/lib/types";
 import {
   isAllowedOrigin,
   checkRateLimit,
@@ -71,7 +74,7 @@ export async function POST(request: Request) {
     return new Response("CORS origin not allowed.", { status: 403 });
   }
 
-  // Defensively reject oversized payloads (max 16KB for URL investigation request)
+  // Defensively reject oversized payloads (max 16KB for URL / message investigation request)
   const contentLength = request.headers.get("content-length");
   if (contentLength && parseInt(contentLength, 10) > 16384) {
     return jsonResponse(request, { error: "Payload too large (max 16KB)." }, { status: 413 });
@@ -110,13 +113,121 @@ export async function POST(request: Request) {
       return jsonResponse(request, { error: issue?.message || "Invalid input." }, { status: 400 });
     }
 
-    // 2. Validate destination URL and verify network safety
-    const validation = validateAndNormalizeUrl(parseResult.data.input);
+    const {
+      input,
+      messageText,
+      targetUrl: explicitTargetUrl,
+      claimedOrganization,
+      claimedJobRole,
+      officialCareersUrl,
+      analysisMode,
+    } = parseResult.data;
+
+    // 2. Perform Message Intelligence & Claim Extraction
+    const rawMessage = (messageText || input).trim();
+    const isExplicitLinkMode = analysisMode === "link";
+
+    const messageData = analyzeMessageText({
+      rawMessage,
+      userSpecifiedOrg: claimedOrganization,
+      userSpecifiedRole: claimedJobRole,
+      targetUrl: explicitTargetUrl,
+    });
+
+    const acceptsSse = request.headers.get("accept")?.includes("text/event-stream");
+
+    // 3. Resolve destination URL to investigate
+    let candidateUrl = explicitTargetUrl?.trim();
+
+    if (!candidateUrl) {
+      if (isExplicitLinkMode) {
+        candidateUrl = input.trim();
+      } else if (messageData.extractedUrls.length === 1) {
+        candidateUrl = messageData.extractedUrls[0];
+      } else if (messageData.extractedUrls.length > 1) {
+        // Multiple URLs detected in message -> Prompt user to select target
+        if (acceptsSse) {
+          return new Response(
+            `event: multiple_urls\ndata: ${JSON.stringify({
+              type: "multiple_urls",
+              extractedUrls: messageData.extractedUrls,
+              message: "Multiple destination links detected in message. Please select which destination to investigate.",
+              messageData,
+            })}\n\n`,
+            {
+              headers: {
+                "Content-Type": "text/event-stream; charset=utf-8",
+                "Cache-Control": "no-cache, no-transform",
+                Connection: "keep-alive",
+                ...getCorsHeaders(request),
+              },
+            }
+          );
+        } else {
+          return jsonResponse(
+            request,
+            {
+              multipleUrls: true,
+              extractedUrls: messageData.extractedUrls,
+              message: "Multiple destination links detected in message. Please select which destination to investigate.",
+              messageData,
+            },
+            { status: 200 }
+          );
+        }
+      } else {
+        // 0 URLs extracted. Test if input itself is a valid URL
+        const directCheck = validateAndNormalizeUrl(input.trim());
+        if (directCheck.valid) {
+          candidateUrl = directCheck.normalizedUrl;
+        }
+      }
+    }
+
+    // 4. Handle Text-Only Message Analysis (no URL present)
+    if (!candidateUrl) {
+      const companyIdentity = verifyCompanyIdentity({
+        claimedOrg: messageData.claimedOrganization,
+        userProvidedCareersUrl: officialCareersUrl,
+      });
+
+      const jobVerification = verifyJobListing({
+        claimedRole: messageData.claimedJobRole,
+        claimedEmployer: messageData.claimedOrganization || companyIdentity.claimedOrganization,
+        companyIdentity,
+        feeWarningPresent: Boolean(messageData.recruitmentFeeWarning?.detected),
+      });
+
+      const textReport = createTextOnlyReport({
+        messageData,
+        companyIdentity,
+        jobVerification,
+      });
+
+      if (acceptsSse) {
+        return new Response(
+          `event: report\ndata: ${JSON.stringify({ type: "report", report: textReport })}\n\n`,
+          {
+            headers: {
+              "Content-Type": "text/event-stream; charset=utf-8",
+              "Cache-Control": "no-cache, no-transform",
+              Connection: "keep-alive",
+              ...getCorsHeaders(request),
+            },
+          }
+        );
+      } else {
+        return jsonResponse(request, { report: textReport }, { status: 200 });
+      }
+    }
+
+    // 5. Validate destination URL and verify network safety
+    const validation = validateAndNormalizeUrl(candidateUrl);
     if (!validation.valid) {
       return jsonResponse(request, { error: validation.error }, { status: 400 });
     }
 
-    // 3. Verify server-side TinyFish API key
+    // 6. Verify server-side TinyFish API key
     const apiKey = process.env.TINYFISH_API_KEY;
     if (!apiKey || apiKey.trim().length === 0) {
       return jsonResponse(
@@ -128,9 +239,32 @@ export async function POST(request: Request) {
       );
     }
 
-    const acceptsSse = request.headers.get("accept")?.includes("text/event-stream");
+    // Helper to synthesize final scam & identity intelligence
+    const finalizeReport = (baseReport: InvestigationReport): InvestigationReport => {
+      const companyIdentity = verifyCompanyIdentity({
+        claimedOrg: messageData.claimedOrganization || baseReport.claimedOrganization,
+        destinationUrl: validation.normalizedUrl,
+        userProvidedCareersUrl: officialCareersUrl,
+      });
 
-    // 4. Handle Real-Time SSE Streaming to Client
+      const jobVerification = verifyJobListing({
+        claimedRole: messageData.claimedJobRole,
+        claimedEmployer: messageData.claimedOrganization || companyIdentity.claimedOrganization,
+        jobListingUrl: validation.normalizedUrl,
+        companyIdentity,
+        feeWarningPresent: Boolean(messageData.recruitmentFeeWarning?.detected),
+      });
+
+      return enrichReportWithScamIntelligence({
+        report: baseReport,
+        messageData,
+        companyIdentity,
+        jobVerification,
+        analysisMode: analysisMode || (isExplicitLinkMode ? "link" : "message"),
+      });
+    };
+
+    // 7. Handle Real-Time SSE Streaming to Client
     if (acceptsSse) {
       const encoder = new TextEncoder();
       const stream = new TransformStream();
@@ -154,7 +288,7 @@ export async function POST(request: Request) {
         try {
           await sendEvent({
             type: "started",
-            message: "Validation passed. Initiating TinyFish investigation…",
+            message: "Validation passed. Initiating TinyFish read-only investigation…",
             timestamp: new Date().toISOString(),
           });
 
@@ -166,20 +300,21 @@ export async function POST(request: Request) {
             },
           });
 
-          const report = assessInvestigation({
+          const baseReport = assessInvestigation({
             submittedUrl: validation.url,
             tinyFishResult,
           });
 
+          const finalReport = finalizeReport(baseReport);
+
           await sendEvent({
             type: "report",
-            report,
+            report: finalReport,
           });
         } catch (error) {
           const message = sanitizeClientError(error);
           const isTimeout = /timed out|timeout/i.test(message);
 
-          // Build a safe Unknown report even on failure/timeout rather than crashing
           const failureReport = assessInvestigation({
             submittedUrl: validation.url,
             tinyFishResult: {
@@ -191,12 +326,14 @@ export async function POST(request: Request) {
             },
           });
 
+          const finalizedFailureReport = finalizeReport(failureReport);
+
           await sendEvent({
             type: "error",
             message: isTimeout ? "Investigation timed out. No safe verdict was issued." : message,
             timestamp: new Date().toISOString(),
             error: message,
-            report: failureReport,
+            report: finalizedFailureReport,
           });
         } finally {
           await writeChain;
@@ -215,47 +352,49 @@ export async function POST(request: Request) {
       });
     }
 
-    // 5. Standard JSON endpoint for non-streaming clients
+    // 8. Standard JSON endpoint for non-streaming clients
     try {
       const tinyFishResult = await executeTinyFishInvestigation({
         url: validation.normalizedUrl,
         apiKey,
       });
 
-      const report = assessInvestigation({
+      const baseReport = assessInvestigation({
         submittedUrl: validation.url,
         tinyFishResult,
       });
 
-      return jsonResponse(request, { report }, { status: 200 });
-    } catch (execError) {
-      const message = sanitizeClientError(execError);
+      const finalReport = finalizeReport(baseReport);
+
+      return jsonResponse(request, { report: finalReport }, { status: 200 });
+    } catch (error) {
+      const message = sanitizeClientError(error);
       const isTimeout = /timed out|timeout/i.test(message);
 
-      // Return a structured report marked as Unknown due to failure
-      const report = assessInvestigation({
+      const failureReport = assessInvestigation({
         submittedUrl: validation.url,
         tinyFishResult: {
           success: false,
           goalFailed: true,
-          errorMessage: isTimeout ? "Investigation timed out." : message,
+          errorMessage: isTimeout ? "Investigation timed out after 110s." : message,
           eventsCount: 0,
           rawAgentText: "",
         },
       });
 
+      const finalizedFailureReport = finalizeReport(failureReport);
+
       return jsonResponse(
         request,
         {
           error: isTimeout ? "The investigation timed out. No safe verdict was issued." : message,
-          report,
+          report: finalizedFailureReport,
         },
         { status: isTimeout ? 504 : 502 }
       );
     }
-  } catch (fatalError) {
-    // Sanitize any top-level uncaught exceptions so server secrets or stack traces never leak
-    const message = sanitizeClientError(fatalError);
+  } catch (error) {
+    const message = sanitizeClientError(error);
     return jsonResponse(request, { error: message }, { status: 500 });
   }
 }

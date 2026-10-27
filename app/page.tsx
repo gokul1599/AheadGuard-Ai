@@ -2,25 +2,98 @@
 
 import { useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
-import type { InvestigationReport } from "@/lib/types";
+import type { InvestigationReport, ClaimEvaluation } from "@/lib/types";
+import { createShareableReport, formatReportMarkdown } from "@/lib/share-report";
+import { extractUrlsFromText } from "@/lib/message-intelligence";
 
-const EXAMPLES = [
+type AnalysisMode = "link" | "message" | "job" | "report";
+
+const LINK_EXAMPLES = [
   { label: "Scaler Official", value: "https://www.scaler.com" },
   { label: "Wikipedia", value: "https://en.wikipedia.org/wiki/Computer_security" },
   { label: "Phishing / Urgent Alert", value: "https://portal-account-verify.online/login?action=verify_now" },
   { label: "Lookalike Punycode", value: "https://xn--gogle-pra.com/signin" },
 ];
 
+const MESSAGE_EXAMPLES = [
+  {
+    label: "WhatsApp Job Scam (Registration Fee)",
+    value: "Congratulations! You are shortlisted for Google Cloud Operations Lead. Salary is $12,000/month. To confirm your interview slot, please pay a refundable registration fee of $50 via UPI to recruitment.team@okaxis. Apply here: https://careers-google-verify.top/apply",
+  },
+  {
+    label: "Tech Support Alert (Password & OTP)",
+    value: "URGENT: Your Microsoft 365 license will be terminated in 24 hours due to suspicious activity. Reply immediately with your current password and 6-digit OTP code to avoid total account deletion: https://security-microsoft-update.net/auth",
+  },
+  {
+    label: "Part-Time Task Scam (Multi-Link)",
+    value: "Earn $500/day by reviewing YouTube videos from home! No experience required. Official info at https://google.com and register your task wallet at https://fast-payout-tasks.xyz/register.",
+  },
+];
+
+const JOB_EXAMPLES = [
+  {
+    label: "Amazon AWS Architect (Official)",
+    org: "Amazon",
+    role: "Senior Solutions Architect",
+    comp: "$195,000/year",
+    recruiter: "Amazon Talent Acquisition",
+    url: "https://amazon.jobs/en/jobs/2501234/senior-solutions-architect",
+    careersUrl: "https://amazon.jobs",
+  },
+  {
+    label: "Netflix Entry-Level (Lookalike + Security Deposit)",
+    org: "Netflix",
+    role: "Junior Content Reviewer",
+    comp: "$80/hr remote",
+    recruiter: "David Miller (Telegram: @netflix_hiring)",
+    url: "https://netflix-careers-portal.online/application",
+    careersUrl: "https://jobs.netflix.com",
+    notes: "Mandatory $150 refundable equipment security deposit required prior to dispatching review laptop.",
+  },
+];
+
 export default function Home() {
-  const [input, setInput] = useState("");
+  // Mode selection
+  const [mode, setMode] = useState<AnalysisMode>("link");
+
+  // Input states
+  const [linkInput, setLinkInput] = useState("");
+  const [contextMessage, setContextMessage] = useState("");
+  const [showContextMessage, setShowContextMessage] = useState(false);
+
+  const [messageInput, setMessageInput] = useState("");
+  const [messageTargetUrl, setMessageTargetUrl] = useState("");
+
+  const [jobOrg, setJobOrg] = useState("");
+  const [jobRole, setJobRole] = useState("");
+  const [jobComp, setJobComp] = useState("");
+  const [jobRecruiter, setJobRecruiter] = useState("");
+  const [jobUrl, setJobUrl] = useState("");
+  const [jobCareersOverride, setJobCareersOverride] = useState("");
+  const [jobOfferText, setJobOfferText] = useState("");
+
+  const [reportJsonInput, setReportJsonInput] = useState("");
+
+  // Investigation execution states
   const [loading, setLoading] = useState(false);
-  const [status, setStatus] = useState("Ready for destination check");
+  const [status, setStatus] = useState("Ready for digital trust & scam verification");
   const [progressLog, setProgressLog] = useState<string[]>([]);
   const [result, setResult] = useState<InvestigationReport | null>(null);
   const [streamingUrl, setStreamingUrl] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  const [activeTab, setActiveTab] = useState<"evidence" | "facts" | "checks">("evidence");
+  const [activeTab, setActiveTab] = useState<"intel" | "claims" | "routes" | "evidence" | "facts" | "checks">("intel");
+  const [claimFilter, setClaimFilter] = useState<ClaimEvaluation | "All">("All");
+
+  // Multi-URL modal state
+  const [showMultiUrlModal, setShowMultiUrlModal] = useState(false);
+  const [detectedUrls, setDetectedUrls] = useState<string[]>([]);
+  const [selectedMultiUrl, setSelectedMultiUrl] = useState<string>("");
+  const [pendingMessagePayload, setPendingMessagePayload] = useState<Record<string, unknown> | null>(null);
+
+  // Share report modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
   // Evidence Ledger state (localStorage)
   const [history, setHistory] = useState<InvestigationReport[]>([]);
@@ -44,15 +117,14 @@ export default function Home() {
       // LocalStorage access issues
     }
 
-    // Check for deep-link URL parameter (?url=... or ?target=...)
     try {
       const params = new URLSearchParams(window.location.search);
       const urlParam = params.get("url") || params.get("target");
       if (urlParam) {
         const decoded = decodeURIComponent(urlParam).trim();
-        setInput(decoded);
+        setLinkInput(decoded);
+        setMode("link");
 
-        // If we already have a recorded report in the ledger for this destination, surface it immediately
         const existing = parsedHistory.find(
           (r) =>
             r.originalUrl.toLowerCase() === decoded.toLowerCase() ||
@@ -70,7 +142,6 @@ export default function Home() {
     }
   }, []);
 
-  // Save report to ledger unless paused
   const saveToLedger = (report: InvestigationReport) => {
     if (isHistoryPaused) return;
     try {
@@ -104,8 +175,73 @@ export default function Home() {
     }
   };
 
-  async function investigate() {
-    if (!input.trim() || loading) return;
+  // Main Investigation Handler
+  async function runInvestigation(overridePayload?: Record<string, unknown>) {
+    if (loading) return;
+
+    // Build payload according to current active mode
+    let payload: Record<string, unknown> = {};
+
+    if (overridePayload) {
+      payload = overridePayload;
+    } else if (mode === "link") {
+      if (!linkInput.trim()) return;
+      payload = {
+        input: linkInput.trim(),
+        messageText: showContextMessage && contextMessage.trim() ? contextMessage.trim() : undefined,
+        analysisMode: "link",
+      };
+    } else if (mode === "message") {
+      if (!messageInput.trim()) return;
+      const extracted = extractUrlsFromText(messageInput);
+
+      // Multi-URL check before sending if user didn't pre-specify a target URL
+      if (!messageTargetUrl.trim() && extracted.length > 1) {
+        setDetectedUrls(extracted);
+        setSelectedMultiUrl(extracted[0]);
+        setPendingMessagePayload({
+          input: messageInput.trim(),
+          messageText: messageInput.trim(),
+          analysisMode: "message",
+        });
+        setShowMultiUrlModal(true);
+        return;
+      }
+
+      payload = {
+        input: messageTargetUrl.trim() || messageInput.trim(),
+        messageText: messageInput.trim(),
+        targetUrl: messageTargetUrl.trim() || undefined,
+        analysisMode: "message",
+      };
+    } else if (mode === "job") {
+      const primaryInput = jobUrl.trim() || jobOfferText.trim() || jobOrg.trim();
+      if (!primaryInput) return;
+
+      payload = {
+        input: primaryInput,
+        messageText: jobOfferText.trim() || undefined,
+        targetUrl: jobUrl.trim() || undefined,
+        claimedOrganization: jobOrg.trim() || undefined,
+        claimedJobRole: jobRole.trim() || undefined,
+        officialCareersUrl: jobCareersOverride.trim() || undefined,
+        analysisMode: "job",
+      };
+    } else if (mode === "report") {
+      try {
+        const parsed = JSON.parse(reportJsonInput);
+        if (!parsed.riskOutcome || !parsed.investigationId) {
+          throw new Error("Invalid AheadGuard report structure.");
+        }
+        setResult(parsed);
+        saveToLedger(parsed);
+        setStatus(`Loaded report · ${parsed.riskOutcome}`);
+        return;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Invalid JSON report.");
+        return;
+      }
+    }
 
     setError(null);
     setResult(null);
@@ -113,7 +249,7 @@ export default function Home() {
     setShowRaw(false);
     setProgressLog([]);
     setLoading(true);
-    setStatus("Initiating live investigation…");
+    setStatus("Initiating AheadGuard investigation & scam evaluation…");
 
     const addLog = (msg: string) => {
       setProgressLog((prev) => [...prev, msg]);
@@ -131,7 +267,7 @@ export default function Home() {
           "Content-Type": "application/json",
           Accept: "text/event-stream",
         },
-        body: JSON.stringify({ input }),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {
@@ -144,12 +280,11 @@ export default function Home() {
             saveToLedger(errData.report);
           }
         } catch {
-          // Response body was not JSON
+          // Non-JSON response
         }
         throw new Error(errorMsg);
       }
 
-      // Check if response is an SSE stream
       const contentType = response.headers.get("content-type") || "";
       if (contentType.includes("text/event-stream") && response.body) {
         const reader = response.body.getReader();
@@ -170,27 +305,39 @@ export default function Home() {
 
           try {
             const parsed = JSON.parse(dataRaw);
+
+            if (eventType === "multiple_urls") {
+              // Upstream identified multiple URLs requiring disambiguation
+              setDetectedUrls(parsed.extractedUrls || []);
+              setSelectedMultiUrl(parsed.extractedUrls?.[0] || "");
+              setPendingMessagePayload(payload);
+              setShowMultiUrlModal(true);
+              setLoading(false);
+              return;
+            }
+
             if (eventType === "started") {
               setStatus(parsed.message);
               addLog(`[SESSION] ${parsed.message}`);
             } else if (eventType === "streaming_url") {
               setStreamingUrl(parsed.streamingUrl);
-              addLog(`[STREAM] Live replay URL generated`);
+              addLog(`[STREAM] Live sandbox replay URL generated`);
             } else if (eventType === "progress") {
               setStatus(parsed.message);
               addLog(`[PROGRESS] ${parsed.message}`);
             } else if (eventType === "heartbeat") {
               // Heartbeat
             } else if (eventType === "complete") {
-              setStatus("Finalizing evidence assessment…");
-              addLog(`[COMPLETED] Remote browser execution finished`);
+              setStatus("Finalizing evidence and claim evaluations…");
+              addLog(`[COMPLETED] Sandbox execution finished`);
             } else if (eventType === "report") {
               const rep = (parsed.report || parsed) as InvestigationReport;
               setResult(rep);
               if (rep.replayUrl) setStreamingUrl(rep.replayUrl);
               saveToLedger(rep);
               setStatus(`Investigation completed · ${rep.riskOutcome}`);
-              addLog(`[ASSESSMENT] Policy engine classified: ${rep.riskOutcome}`);
+              addLog(`[VERDICT] Final risk outcome: ${rep.riskOutcome}`);
+              setActiveTab(rep.scamIntelligence ? "intel" : "evidence");
             } else if (eventType === "error") {
               if (parsed.report) {
                 setResult(parsed.report);
@@ -228,13 +375,18 @@ export default function Home() {
           buffer = "";
         }
       } else {
-        // Fallback for regular JSON response
         const data = await response.json();
-        if (data.report) {
+        if (data.multipleUrls) {
+          setDetectedUrls(data.extractedUrls || []);
+          setSelectedMultiUrl(data.extractedUrls?.[0] || "");
+          setPendingMessagePayload(payload);
+          setShowMultiUrlModal(true);
+        } else if (data.report) {
           setResult(data.report);
           if (data.report.replayUrl) setStreamingUrl(data.report.replayUrl);
           saveToLedger(data.report);
           setStatus(`Investigation complete · ${data.report.riskOutcome}`);
+          setActiveTab(data.report.scamIntelligence ? "intel" : "evidence");
         } else {
           throw new Error(data.error || "No investigation report returned.");
         }
@@ -249,6 +401,49 @@ export default function Home() {
     }
   }
 
+  // Multi-URL selection resolution
+  const handleConfirmMultiUrl = () => {
+    setShowMultiUrlModal(false);
+    if (!pendingMessagePayload) return;
+
+    if (selectedMultiUrl === "__TEXT_ONLY__") {
+      runInvestigation({
+        ...pendingMessagePayload,
+        targetUrl: undefined,
+        input: (pendingMessagePayload.messageText as string) || "text://message-analysis",
+      });
+    } else {
+      runInvestigation({
+        ...pendingMessagePayload,
+        targetUrl: selectedMultiUrl,
+        input: selectedMultiUrl,
+      });
+    }
+  };
+
+  // Copy helper
+  const handleCopy = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyStatus(`Copied ${label}!`);
+      setTimeout(() => setCopyStatus(null), 2500);
+    } catch {
+      setCopyStatus("Failed to copy.");
+      setTimeout(() => setCopyStatus(null), 2000);
+    }
+  };
+
+  const handleDownloadJson = (rep: InvestigationReport) => {
+    const shareable = createShareableReport(rep);
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(shareable, null, 2));
+    const downloadAnchor = document.createElement("a");
+    downloadAnchor.setAttribute("href", dataStr);
+    downloadAnchor.setAttribute("download", `aheadguard-report-${rep.investigationId}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+  };
+
   const riskClass =
     result?.riskOutcome === "High risk"
       ? "risk-high"
@@ -257,6 +452,9 @@ export default function Home() {
       : result?.riskOutcome === "Low observed risk"
       ? "risk-low"
       : "risk-unknown";
+
+  const intel = result?.scamIntelligence;
+  const filteredClaims = (intel?.claims || []).filter((c) => (claimFilter === "All" ? true : c.evaluation === claimFilter));
 
   return (
     <main className="app-shell">
@@ -270,12 +468,12 @@ export default function Home() {
             <span className="brand-title">
               AheadGuard <span className="brand-accent">AI</span>
             </span>
-            <span className="brand-subtitle">PRE-ACTION DIGITAL SAFETY GUARDIAN</span>
+            <span className="brand-subtitle">DIGITAL TRUST, SCAM & SAFETY INTELLIGENCE</span>
           </span>
         </a>
         <div className="topbar-right">
           <span className="engine-status-badge" role="status" aria-live="polite">
-            <span className="status-dot" /> TinyFish Engine Active
+            <span className="status-dot" /> Evidence Engine Active
           </span>
         </div>
       </header>
@@ -284,7 +482,7 @@ export default function Home() {
       <section className="hero" id="top">
         <div className="hero-copy">
           <div className="eyebrow">
-            <span className="eyebrow-line" /> PRE-ACTION SAFETY ENGINE
+            <span className="eyebrow-line" /> EVIDENCE-DRIVEN DIGITAL TRUST
           </div>
           <h1>
             Your AI checks first.
@@ -292,21 +490,22 @@ export default function Home() {
             <span className="gradient-text">You act with confidence.</span>
           </h1>
           <p>
-            AheadGuard investigates unknown destinations, phishing traps, and deceptive links before you commit.
-            It observes real behavior inside an isolated browser, simulates consequences, and recommends verified paths.
+            AheadGuard investigates suspicious messages, internship & job offers, payment demands, and unexpected links
+            before you commit. It verifies identities against official sources, isolates malicious traps in a sandbox,
+            and provides grounded, claim-by-claim clarity.
           </p>
           <div className="feature-pill-row">
             <span className="feature-pill">
-              <Icon name="radar" /> Constrained Sandbox
+              <Icon name="shield" /> Claim Ledger
             </span>
             <span className="feature-pill">
-              <Icon name="search" /> TinyFish Probe
+              <Icon name="search" /> Identity Match
             </span>
             <span className="feature-pill">
-              <Icon name="eye" /> Action Preview
+              <Icon name="radar" /> Isolated Sandbox
             </span>
             <span className="feature-pill">
-              <Icon name="shield" /> Deterministic Policy
+              <Icon name="lock" /> Privacy Redaction
             </span>
           </div>
         </div>
@@ -318,109 +517,447 @@ export default function Home() {
           </div>
           <div className="radar-caption">
             <span className="pulse-label">
-              <span className="status-dot blinking" /> ENGINE READY
+              <span className="status-dot blinking" /> READY TO VERIFY
             </span>
-            <span>READ-ONLY ISOLATION</span>
+            <span>ZERO SENSITIVE DATA LOGGING</span>
           </div>
         </div>
       </section>
 
       {/* Main Workspace Grid */}
       <section className="workspace-grid">
-        {/* Panel 1: Input */}
+        {/* Panel 1: Input & Mode Selection */}
         <div className="panel">
           <div className="panel-heading">
             <div>
-              <span className="section-kicker">01 / CHECK BEFORE I ACT</span>
-              <h2>Submit target link or message</h2>
+              <span className="section-kicker">01 / SUBMIT FOR VERIFICATION</span>
+              <h2>Choose Investigation Mode</h2>
             </div>
             <span className="panel-icon-badge">
               <Icon name="link" />
             </span>
           </div>
-          <p className="panel-description">
-            Enter a destination link or paste an unexpected message. AheadGuard initiates a strictly read-only
-            investigation using TinyFish, inspects redirects and form elements, and evaluates warning indicators.
-          </p>
 
-          <div className="input-label-row">
-            <label className="input-label" htmlFor="target-input">
-              Destination URL or message
-            </label>
-            <span className="char-count">{input.length}/4000</span>
-          </div>
-
-          <div className="input-textarea-wrapper">
-            <textarea
-              id="target-input"
-              className="input-textarea"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="https://example.com or paste an unexpected message with a link…"
-              maxLength={4000}
+          {/* Mode Selector Tabs */}
+          <nav className="mode-selector-nav" aria-label="Investigation Mode">
+            <button
+              className={`mode-tab-btn ${mode === "link" ? "active" : ""}`}
+              onClick={() => setMode("link")}
               disabled={loading}
-              aria-describedby="input-helper-note"
-            />
-          </div>
+              type="button"
+            >
+              <Icon name="link" />
+              <span>Check a Link</span>
+            </button>
+            <button
+              className={`mode-tab-btn ${mode === "message" ? "active" : ""}`}
+              onClick={() => setMode("message")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="file-text" />
+              <span>Analyze a Message</span>
+            </button>
+            <button
+              className={`mode-tab-btn ${mode === "job" ? "active" : ""}`}
+              onClick={() => setMode("job")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="shield-check" />
+              <span>Verify Job Offer</span>
+            </button>
+            <button
+              className={`mode-tab-btn ${mode === "report" ? "active" : ""}`}
+              onClick={() => setMode("report")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="braces" />
+              <span>Review Report</span>
+            </button>
+          </nav>
 
-          <div className="input-meta-bar" id="input-helper-note">
-            <span>Never paste passwords, OTPs, or private account data.</span>
-          </div>
+          {/* MODE 1: Check a Link */}
+          {mode === "link" && (
+            <div className="mode-form-container">
+              <p className="panel-description">
+                Submit an unknown or suspicious URL. AheadGuard inspects redirect chains, credential/payment forms,
+                and lookalike deception in a constrained read-only sandbox.
+              </p>
 
-          {/* Quick Fills */}
-          <div className="scenario-section">
-            <span className="scenario-title">TEST SCENARIOS</span>
-            <div className="scenario-chips">
-              {EXAMPLES.map((ex) => (
-                <button
-                  className="scenario-btn"
-                  key={ex.label}
-                  onClick={() => setInput(ex.value)}
+              <div className="input-label-row">
+                <label className="input-label" htmlFor="link-target-input">
+                  Target Destination URL
+                </label>
+                <span className="char-count">{linkInput.length}/2000</span>
+              </div>
+
+              <div className="input-textarea-wrapper">
+                <input
+                  id="link-target-input"
+                  className="input-text-input"
+                  style={{ width: "100%", fontSize: "14px", padding: "12px 14px" }}
+                  value={linkInput}
+                  onChange={(e) => setLinkInput(e.target.value)}
+                  placeholder="https://example.com/login"
                   disabled={loading}
-                  type="button"
-                >
-                  {ex.label}
-                </button>
-              ))}
-            </div>
-          </div>
+                />
+              </div>
 
+              {/* Optional context message toggle */}
+              <div style={{ marginTop: "12px" }}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  style={{ padding: "6px 10px", fontSize: "11px" }}
+                  onClick={() => setShowContextMessage(!showContextMessage)}
+                >
+                  <Icon name="file-text" />
+                  <span>{showContextMessage ? "Hide Message Context" : "+ Add Message Context (Optional)"}</span>
+                </button>
+              </div>
+
+              {showContextMessage && (
+                <div style={{ marginTop: "10px" }}>
+                  <label className="input-label" htmlFor="context-message-input">
+                    Accompanying Message or Email Text
+                  </label>
+                  <textarea
+                    id="context-message-input"
+                    className="input-textarea"
+                    style={{ minHeight: "80px" }}
+                    value={contextMessage}
+                    onChange={(e) => setContextMessage(e.target.value)}
+                    placeholder="Paste the SMS, WhatsApp, or email message that accompanied this link…"
+                    disabled={loading}
+                  />
+                </div>
+              )}
+
+              {/* Test scenarios */}
+              <div className="scenario-section">
+                <span className="scenario-title">TEST SCENARIOS</span>
+                <div className="scenario-chips">
+                  {LINK_EXAMPLES.map((ex) => (
+                    <button
+                      className="scenario-btn"
+                      key={ex.label}
+                      onClick={() => setLinkInput(ex.value)}
+                      disabled={loading}
+                      type="button"
+                    >
+                      {ex.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODE 2: Analyze a Message */}
+          {mode === "message" && (
+            <div className="mode-form-container">
+              <p className="panel-description">
+                Paste an unexpected WhatsApp, Telegram, SMS, or email message. AheadGuard automatically redacts personal
+                details, extracts links and claims, detects recruitment fees, and evaluates risk.
+              </p>
+
+              <div className="input-label-row">
+                <label className="input-label" htmlFor="message-text-input">
+                  Suspicious Message Text
+                </label>
+                <span className="char-count">{messageInput.length}/4000</span>
+              </div>
+
+              <div className="input-textarea-wrapper">
+                <textarea
+                  id="message-text-input"
+                  className="input-textarea"
+                  style={{ minHeight: "130px" }}
+                  value={messageInput}
+                  onChange={(e) => setMessageInput(e.target.value)}
+                  placeholder="Congratulations! You have been selected for a part-time job. Pay $50 registration fee via UPI to..."
+                  maxLength={4000}
+                  disabled={loading}
+                />
+              </div>
+
+              <div className="input-meta-bar">
+                <span>Client-side PII redaction active: Phone numbers, emails, and IDs are masked.</span>
+              </div>
+
+              <div style={{ marginTop: "12px" }}>
+                <label className="input-label" htmlFor="message-explicit-url">
+                  Explicit Target URL (Optional override)
+                </label>
+                <input
+                  id="message-explicit-url"
+                  className="input-text-input"
+                  style={{ width: "100%" }}
+                  value={messageTargetUrl}
+                  onChange={(e) => setMessageTargetUrl(e.target.value)}
+                  placeholder="https://... (Leave empty to auto-extract from message)"
+                  disabled={loading}
+                />
+              </div>
+
+              {/* Message scenario chips */}
+              <div className="scenario-section">
+                <span className="scenario-title">SAMPLE SCAM PATTERNS</span>
+                <div className="scenario-chips">
+                  {MESSAGE_EXAMPLES.map((ex) => (
+                    <button
+                      className="scenario-btn"
+                      key={ex.label}
+                      onClick={() => {
+                        setMessageInput(ex.value);
+                        setMessageTargetUrl("");
+                      }}
+                      disabled={loading}
+                      type="button"
+                    >
+                      {ex.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODE 3: Verify a Job Offer */}
+          {mode === "job" && (
+            <div className="mode-form-container">
+              <p className="panel-description">
+                Verify an internship or employment offer. Compare the claimed employer against verified corporate
+                registries, cross-reference application portals, and detect illegal recruitment fees.
+              </p>
+
+              <div className="job-inputs-grid">
+                <div className="input-field-group">
+                  <label className="input-label" htmlFor="job-org-input">
+                    Claimed Employer / Company *
+                  </label>
+                  <input
+                    id="job-org-input"
+                    className="input-text-input"
+                    value={jobOrg}
+                    onChange={(e) => setJobOrg(e.target.value)}
+                    placeholder="e.g. Google, Amazon, Infosys"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group">
+                  <label className="input-label" htmlFor="job-role-input">
+                    Job / Internship Title
+                  </label>
+                  <input
+                    id="job-role-input"
+                    className="input-text-input"
+                    value={jobRole}
+                    onChange={(e) => setJobRole(e.target.value)}
+                    placeholder="e.g. Software Engineer Intern"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group">
+                  <label className="input-label" htmlFor="job-comp-input">
+                    Stated Compensation / Stipend
+                  </label>
+                  <input
+                    id="job-comp-input"
+                    className="input-text-input"
+                    value={jobComp}
+                    onChange={(e) => setJobComp(e.target.value)}
+                    placeholder="e.g. $45/hr or ₹50,000/mo"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group">
+                  <label className="input-label" htmlFor="job-recruiter-input">
+                    Recruiter Name / Handle
+                  </label>
+                  <input
+                    id="job-recruiter-input"
+                    className="input-text-input"
+                    value={jobRecruiter}
+                    onChange={(e) => setJobRecruiter(e.target.value)}
+                    placeholder="e.g. HR Team, @recruiter_bot"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group full-width">
+                  <label className="input-label" htmlFor="job-url-input">
+                    Application or Offer Link
+                  </label>
+                  <input
+                    id="job-url-input"
+                    className="input-text-input"
+                    value={jobUrl}
+                    onChange={(e) => setJobUrl(e.target.value)}
+                    placeholder="https://..."
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group full-width">
+                  <label className="input-label" htmlFor="job-careers-override">
+                    Official Careers Site URL (Optional override)
+                  </label>
+                  <input
+                    id="job-careers-override"
+                    className="input-text-input"
+                    value={jobCareersOverride}
+                    onChange={(e) => setJobCareersOverride(e.target.value)}
+                    placeholder="https://careers.company.com (if known)"
+                    disabled={loading}
+                  />
+                </div>
+
+                <div className="input-field-group full-width">
+                  <label className="input-label" htmlFor="job-offer-text">
+                    Offer Letter Excerpt or Message
+                  </label>
+                  <textarea
+                    id="job-offer-text"
+                    className="input-textarea"
+                    style={{ minHeight: "80px" }}
+                    value={jobOfferText}
+                    onChange={(e) => setJobOfferText(e.target.value)}
+                    placeholder="Paste the offer letter text, email body, or WhatsApp hiring instructions…"
+                    disabled={loading}
+                  />
+                </div>
+              </div>
+
+              {/* Sample job presets */}
+              <div className="scenario-section">
+                <span className="scenario-title">VERIFICATION PRESETS</span>
+                <div className="scenario-chips">
+                  {JOB_EXAMPLES.map((ex) => (
+                    <button
+                      className="scenario-btn"
+                      key={ex.label}
+                      onClick={() => {
+                        setJobOrg(ex.org);
+                        setJobRole(ex.role);
+                        setJobComp(ex.comp);
+                        setJobRecruiter(ex.recruiter);
+                        setJobUrl(ex.url);
+                        setJobCareersOverride(ex.careersUrl);
+                        setJobOfferText(ex.notes || "");
+                      }}
+                      disabled={loading}
+                      type="button"
+                    >
+                      {ex.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* MODE 4: Review a Report */}
+          {mode === "report" && (
+            <div className="mode-form-container">
+              <p className="panel-description">
+                Paste an exported AheadGuard report JSON to view the verified claims, sandbox evidence, and independent
+                routes locally without sending any data over the network.
+              </p>
+
+              <div className="input-label-row">
+                <label className="input-label" htmlFor="report-json-input">
+                  AheadGuard Report JSON
+                </label>
+                <span className="char-count">{reportJsonInput.length} chars</span>
+              </div>
+
+              <div className="input-textarea-wrapper">
+                <textarea
+                  id="report-json-input"
+                  className="input-textarea"
+                  style={{ minHeight: "160px", fontFamily: "var(--font-mono)", fontSize: "12px" }}
+                  value={reportJsonInput}
+                  onChange={(e) => setReportJsonInput(e.target.value)}
+                  placeholder='{"investigationId": "inv_...", "riskOutcome": "High risk", ...}'
+                  disabled={loading}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Action button */}
           <button
             className="btn-primary"
-            onClick={investigate}
-            disabled={loading || input.trim().length < 4}
+            style={{ marginTop: "16px" }}
+            onClick={() => runInvestigation()}
+            disabled={
+              loading ||
+              (mode === "link" && linkInput.trim().length < 4) ||
+              (mode === "message" && messageInput.trim().length < 5) ||
+              (mode === "job" && !jobOrg.trim() && !jobUrl.trim() && !jobOfferText.trim()) ||
+              (mode === "report" && reportJsonInput.trim().length < 10)
+            }
             type="button"
           >
             {loading ? <Spinner /> : <Icon name="scan-search" />}
-            <span>{loading ? "Investigating destination…" : "Investigate Destination"}</span>
+            <span>
+              {loading
+                ? "Analyzing & Investigating…"
+                : mode === "report"
+                ? "Load & Render Report"
+                : mode === "job"
+                ? "Verify Job Offer & Claims"
+                : mode === "message"
+                ? "Analyze Message & Links"
+                : "Investigate Destination"}
+            </span>
             <Icon name="arrow-up-right" />
           </button>
 
           <div className="boundary-notice">
             <Icon name="lock" />
             <span>
-              <strong>Read-only boundary enforced:</strong> The investigator will not log in, submit forms, execute files,
-              or follow prompt instructions attempting to hijack the investigation.
+              <strong>Read-only boundary enforced:</strong> The investigator will not log in, submit forms, pay fees, or
+              disclose credentials.
             </span>
           </div>
         </div>
 
-        {/* Panel 2: Investigation Findings */}
+        {/* Panel 2: Investigation & Scam Intelligence Findings */}
         <div className="panel">
           <div className="panel-heading">
             <div>
               <span className="section-kicker">02 / EVIDENCE & VERDICT</span>
-              <h2>Investigation report</h2>
+              <h2>Digital Trust Report</h2>
             </div>
-            <span className="panel-icon-badge">
-              <Icon name="activity" />
-            </span>
+            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+              {result && (
+                <button
+                  className="btn-secondary"
+                  style={{ padding: "6px 12px", fontSize: "12px" }}
+                  onClick={() => setShowShareModal(true)}
+                  type="button"
+                >
+                  <Icon name="file-text" />
+                  <span>Share / Export</span>
+                </button>
+              )}
+              <span className="panel-icon-badge">
+                <Icon name="activity" />
+              </span>
+            </div>
           </div>
 
           <div className="status-bar" role="status" aria-live="polite">
             <span className={loading ? "status-dot blinking" : "status-dot"} />
             <span>{status}</span>
-            <span className="status-pill-end">{loading ? "STREAMING" : "LIVE STATUS"}</span>
+            <span className="status-pill-end">{loading ? "STREAMING" : "VERIFIED"}</span>
           </div>
 
           {/* Real-Time Streaming Logs */}
@@ -435,7 +972,7 @@ export default function Home() {
             </div>
           )}
 
-          {/* Error Card */}
+          {/* Error Alert */}
           {error && (
             <div className="alert-card-danger" role="alert">
               <div className="alert-head">
@@ -444,7 +981,7 @@ export default function Home() {
               </div>
               <p>{error}</p>
               {error.includes("TINYFISH_API_KEY") && (
-                <code>Add TINYFISH_API_KEY=your_key to .env.local and restart the server.</code>
+                <code>Add TINYFISH_API_KEY=your_key to .env.local and restart your server.</code>
               )}
             </div>
           )}
@@ -455,21 +992,21 @@ export default function Home() {
               <div className="empty-hud-icon">
                 <Icon name="radar" />
               </div>
-              <h3>{loading ? "Investigating destination" : "Investigation has not run yet"}</h3>
+              <h3>{loading ? "Analyzing claims & inspecting destination" : "Investigation has not run yet"}</h3>
               <p>
                 {loading
-                  ? "TinyFish remote browser is inspecting the destination page and redirect chain in an isolated sandbox. Please wait…"
-                  : "Submit a public URL to start a genuine investigation. AheadGuard will never guess or label an unverified site safe."}
+                  ? "AheadGuard is evaluating claims, redacting sensitive data, and probing destinations in an isolated sandbox. Please wait…"
+                  : "Submit a link, paste a suspicious message, or verify a job offer. AheadGuard will ground every finding in observable evidence."}
               </p>
               <div className="step-roadmap">
                 <div className={`roadmap-item ${loading ? "active" : ""}`}>
-                  <span className="item-num">01</span> Validate protocol and network safety
+                  <span className="item-num">01</span> Redact PII & extract claim records
                 </div>
                 <div className={`roadmap-item ${loading ? "active" : ""}`}>
-                  <span className="item-num">02</span> Execute read-only TinyFish inspection
+                  <span className="item-num">02</span> Verify company identity against official registries
                 </div>
                 <div className={`roadmap-item ${result ? "active" : ""}`}>
-                  <span className="item-num">03</span> Ground findings in deterministic policy
+                  <span className="item-num">03</span> Synthesize claims into Supported, Contradicted, or Unverified
                 </div>
               </div>
             </div>
@@ -501,17 +1038,91 @@ export default function Home() {
                   <h3 className="risk-banner-title">{result.riskOutcome}</h3>
                   <p className="risk-banner-desc">{result.outcomeReason}</p>
 
-                  {/* Mandatory Low Risk Disclaimer */}
+                  {/* Low Risk Disclaimer */}
                   {result.riskOutcome === "Low observed risk" && (
                     <div className="safety-disclaimer-callout">
                       <Icon name="info" />
                       <span>
-                        <strong>Notice:</strong> Low observed risk indicates no active warning signals were found during this probe. It is not an absolute guarantee of safety.
+                        <strong>Notice:</strong> Low observed risk indicates no active warning signals were observed during
+                        this probe. It is not an absolute guarantee of future safety.
                       </span>
                     </div>
                   )}
                 </div>
               </div>
+
+              {/* Status Badges: Company Identity & Job Verification */}
+              {intel && (
+                <div className="identity-badge-row">
+                  {/* Company Identity Status */}
+                  <span
+                    className={`intel-badge ${
+                      intel.companyIdentity.status === "Official domain match" ||
+                      intel.companyIdentity.status === "Affiliated domain observed"
+                        ? "badge-match"
+                        : intel.companyIdentity.status === "Identity mismatch"
+                        ? "badge-mismatch"
+                        : intel.companyIdentity.status === "Third-party platform"
+                        ? "badge-platform"
+                        : "badge-unverified"
+                    }`}
+                  >
+                    <Icon
+                      name={
+                        intel.companyIdentity.status === "Official domain match"
+                          ? "shield-check"
+                          : intel.companyIdentity.status === "Identity mismatch"
+                          ? "shield-alert"
+                          : "info"
+                      }
+                    />
+                    Company: {intel.companyIdentity.status}
+                  </span>
+
+                  {/* Job Verification Status */}
+                  {intel.jobVerification && (
+                    <span
+                      className={`intel-badge ${
+                        intel.jobVerification.status === "Listing matched"
+                          ? "badge-match"
+                          : intel.jobVerification.status === "Listing contradicted"
+                          ? "badge-mismatch"
+                          : intel.jobVerification.status === "Listing not found — unverified"
+                          ? "badge-unverified"
+                          : "badge-neutral"
+                      }`}
+                    >
+                      <Icon
+                        name={
+                          intel.jobVerification.status === "Listing matched"
+                            ? "check-circle"
+                            : intel.jobVerification.status === "Listing contradicted"
+                            ? "alert-circle"
+                            : "circle-help"
+                        }
+                      />
+                      Job: {intel.jobVerification.status}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Recruitment Fee Alert Card */}
+              {intel?.recruitmentFeeWarning?.detected && (
+                <div className="fee-warning-banner" role="alert">
+                  <div className="fee-warning-head">
+                    <span className="fee-warning-title">
+                      <Icon name="alert-triangle" /> RECRUITMENT FEE DEMAND DETECTED
+                    </span>
+                    <span className="intel-badge badge-mismatch">CRITICAL RISK</span>
+                  </div>
+                  <div className="fee-quote-box">&ldquo;{intel.recruitmentFeeWarning.quotedText}&rdquo;</div>
+                  <p className="fee-explanation-text">
+                    {intel.recruitmentFeeWarning.explanation} Legitimate corporate employers never demand registration fees,
+                    caution deposits, or equipment charges from candidates.
+                  </p>
+                </div>
+              )}
 
               {/* Action Preview */}
               <div className="action-preview-card">
@@ -531,7 +1142,7 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Destination & Redirection Summary */}
+              {/* Destination & Host Meta */}
               <div className="destination-meta-card">
                 <div>
                   <span className="meta-field-label">SUBMITTED HOST</span>
@@ -542,7 +1153,8 @@ export default function Home() {
                   <div className="redirect-alert-row">
                     <Icon name="alert-circle" />
                     <span>
-                      Redirect detected: Final host resolved to <strong>{result.observedDestination.finalHost || "external domain"}</strong>
+                      Redirect detected: Final host resolved to{" "}
+                      <strong>{result.observedDestination.finalHost || "external domain"}</strong>
                     </span>
                   </div>
                 )}
@@ -570,8 +1182,39 @@ export default function Home() {
                 )}
               </div>
 
-              {/* Tabs for Evidence, Facts, and Checks */}
+              {/* Navigation Tabs */}
               <div className="tab-navigation" role="tablist">
+                {intel && (
+                  <>
+                    <button
+                      className={`tab-btn ${activeTab === "intel" ? "active" : ""}`}
+                      onClick={() => setActiveTab("intel")}
+                      role="tab"
+                      aria-selected={activeTab === "intel"}
+                      type="button"
+                    >
+                      Scam Intelligence
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === "claims" ? "active" : ""}`}
+                      onClick={() => setActiveTab("claims")}
+                      role="tab"
+                      aria-selected={activeTab === "claims"}
+                      type="button"
+                    >
+                      Claims Ledger ({intel.claims.length})
+                    </button>
+                    <button
+                      className={`tab-btn ${activeTab === "routes" ? "active" : ""}`}
+                      onClick={() => setActiveTab("routes")}
+                      role="tab"
+                      aria-selected={activeTab === "routes"}
+                      type="button"
+                    >
+                      Verified Routes ({intel.independentVerificationRoutes.length})
+                    </button>
+                  </>
+                )}
                 <button
                   className={`tab-btn ${activeTab === "evidence" ? "active" : ""}`}
                   onClick={() => setActiveTab("evidence")}
@@ -588,7 +1231,7 @@ export default function Home() {
                   aria-selected={activeTab === "facts"}
                   type="button"
                 >
-                  Observed Facts vs Interpretations
+                  Observed Facts
                 </button>
                 <button
                   className={`tab-btn ${activeTab === "checks" ? "active" : ""}`}
@@ -597,16 +1240,208 @@ export default function Home() {
                   aria-selected={activeTab === "checks"}
                   type="button"
                 >
-                  Checks Performed ({result.checksPerformed.length})
+                  Checks ({result.checksPerformed.length})
                 </button>
               </div>
 
-              {/* Tab 1: Evidence Items */}
+              {/* TAB: Scam Intelligence Overview */}
+              {activeTab === "intel" && intel && (
+                <div role="tabpanel">
+                  {/* Company Verification Breakdown */}
+                  <div className="intel-section">
+                    <span className="intel-section-title">
+                      <Icon name="search-check" /> Organization Identity Verification
+                    </span>
+                    <p style={{ margin: "0 0 10px", fontSize: "13px", color: "var(--text-secondary)" }}>
+                      {intel.companyIdentity.explanation}
+                    </p>
+                    {intel.companyIdentity.officialDomains.length > 0 && (
+                      <div style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                        Approved corporate domains:{" "}
+                        <code style={{ color: "var(--cyan)" }}>
+                          {intel.companyIdentity.officialDomains.join(", ")}
+                        </code>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Payment Risks */}
+                  {intel.paymentRisks.length > 0 && (
+                    <div className="intel-section">
+                      <span className="intel-section-title">
+                        <Icon name="alert-triangle" /> Payment & Financial Risks ({intel.paymentRisks.length})
+                      </span>
+                      <div className="risk-items-grid">
+                        {intel.paymentRisks.map((pr) => (
+                          <div key={pr.id} className="risk-item-card">
+                            <div className="risk-item-header">
+                              <span className="risk-item-tag">{pr.paymentType.replace("_", " ")}</span>
+                              {pr.claimedRecipient && (
+                                <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>
+                                  Recipient: {pr.claimedRecipient}
+                                </span>
+                              )}
+                            </div>
+                            <div className="risk-item-quote">&ldquo;{pr.quotedText}&rdquo;</div>
+                            <p className="risk-item-detail">{pr.cautionReason}</p>
+                            <div style={{ marginTop: "6px", fontSize: "11px", color: "var(--cyan)" }}>
+                              Advice: {pr.recommendedVerificationStep}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Sensitive Data Requests */}
+                  {intel.sensitiveDataRequests.length > 0 && (
+                    <div className="intel-section">
+                      <span className="intel-section-title">
+                        <Icon name="lock" /> Sensitive Data Requests ({intel.sensitiveDataRequests.length})
+                      </span>
+                      <div className="risk-items-grid">
+                        {intel.sensitiveDataRequests.map((s) => (
+                          <div key={s.id} className="risk-item-card">
+                            <div className="risk-item-header">
+                              <span className="risk-item-tag">{s.dataCategory.replace("_", " ")}</span>
+                              <span style={{ fontSize: "11px", color: "var(--text-dim)" }}>{s.source.replace(/_/g, " ")}</span>
+                            </div>
+                            {s.quotedText && <div className="risk-item-quote">&ldquo;{s.quotedText}&rdquo;</div>}
+                            <p className="risk-item-detail">{s.riskExplanation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Redacted Message Excerpt */}
+                  {intel.messageExcerpt && (
+                    <div className="intel-section">
+                      <span className="intel-section-title">
+                        <Icon name="file-text" /> Sanitized Message Excerpt
+                      </span>
+                      <pre className="share-preview-box" style={{ maxHeight: "160px" }}>
+                        {intel.messageExcerpt}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* TAB: Claims Ledger */}
+              {activeTab === "claims" && intel && (
+                <div role="tabpanel">
+                  <div className="claims-ledger-header">
+                    <span className="scenario-title" style={{ margin: 0 }}>
+                      CLAIM-BY-CLAIM EVIDENCE MATRIX
+                    </span>
+                    <div className="claims-filter-group">
+                      {(["All", "Supported", "Contradicted", "Unverified"] as const).map((fil) => (
+                        <button
+                          key={fil}
+                          className={`claims-filter-tab ${claimFilter === fil ? "active" : ""}`}
+                          onClick={() => setClaimFilter(fil)}
+                          type="button"
+                        >
+                          {fil}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="claims-card-list">
+                    {filteredClaims.map((claim) => (
+                      <div
+                        key={claim.id}
+                        className={`claim-record-card claim-${claim.evaluation.toLowerCase()}`}
+                      >
+                        <div className="claim-top-row">
+                          <span className="claim-cat-tag">{claim.category.replace("_", " ")}</span>
+                          <span className={`claim-eval-badge ${claim.evaluation.toLowerCase()}`}>
+                            {claim.evaluation}
+                          </span>
+                        </div>
+                        <h4 className="claim-statement">{claim.claimText}</h4>
+                        <p className="claim-explanation">{claim.explanation}</p>
+                        <div className="claim-source-footer">
+                          <span>Provenance: {claim.provenance.replace("_", " ")}</span>
+                          {claim.sourceUrl && (
+                            <a
+                              href={claim.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="claim-source-link"
+                            >
+                              <span>{claim.sourceType?.replace(/_/g, " ") || "source"}</span>
+                              <Icon name="external-link" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                    {filteredClaims.length === 0 && (
+                      <p style={{ color: "var(--text-muted)", fontSize: "12px", padding: "16px 0" }}>
+                        No claims in this category.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: Independent Verification Routes */}
+              {activeTab === "routes" && intel && (
+                <div role="tabpanel">
+                  <div className="routes-warning-box">
+                    <Icon name="alert-triangle" />
+                    <div>
+                      <strong>CRITICAL CYBERSECURITY RULE:</strong>
+                      <div style={{ marginTop: "2px" }}>
+                        Never verify an offer or security alert using links, phone numbers, or QR codes sent inside the
+                        suspicious message itself. Always use independent official channels below.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="routes-grid">
+                    {intel.independentVerificationRoutes.map((route, i) => (
+                      <div key={i} className="route-card">
+                        <div className="route-header">
+                          <span className="route-title">{route.title}</span>
+                          <span className="intel-badge badge-match">
+                            {route.isIndependentlyEstablished ? "VERIFIED DIRECT" : "INDEPENDENT SEARCH"}
+                          </span>
+                        </div>
+                        <p className="route-desc">{route.relevanceExplanation}</p>
+                        {route.url && (
+                          <a
+                            href={route.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="route-link-btn"
+                          >
+                            <span>Open {route.title}</span>
+                            <Icon name="external-link" />
+                          </a>
+                        )}
+                        <div style={{ fontSize: "11px", color: "var(--text-dim)", marginTop: "4px" }}>
+                          Limitations: {route.limitations}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB: Evidence & Findings */}
               {activeTab === "evidence" && (
                 <div className="findings-container" role="tabpanel">
                   {result.evidenceItems.map((item, idx) => (
                     <div className="finding-card" key={idx}>
-                      <span className={`finding-icon-wrap ${item.kind === "warning" ? "warning" : item.kind === "positive" ? "positive" : "neutral"}`}>
+                      <span
+                        className={`finding-icon-wrap ${
+                          item.kind === "warning" ? "warning" : item.kind === "positive" ? "positive" : "neutral"
+                        }`}
+                      >
                         <Icon
                           name={
                             item.kind === "warning"
@@ -634,7 +1469,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Tab 2: Observed Facts vs Interpretations */}
+              {/* TAB: Observed Facts */}
               {activeTab === "facts" && (
                 <div role="tabpanel">
                   <span className="scenario-title">DIRECT OBSERVATIONS (FACTS)</span>
@@ -692,7 +1527,7 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Tab 3: Checks Performed */}
+              {/* TAB: Checks Performed */}
               {activeTab === "checks" && (
                 <div role="tabpanel">
                   <ul className="checks-checklist">
@@ -731,34 +1566,213 @@ export default function Home() {
                     </p>
                   )}
                   {result.limitations.map((item, i) => (
-                    <p key={i} style={{ margin: "3px 0" }}>{item}</p>
+                    <p key={i} style={{ margin: "3px 0" }}>
+                      {item}
+                    </p>
                   ))}
                 </div>
               </div>
 
-              {/* Actions & Replay */}
+              {/* Actions & Live Replay */}
               <div className="result-action-bar">
-                <button
-                  className="btn-secondary"
-                  onClick={() => setShowRaw(!showRaw)}
-                  type="button"
-                >
+                <button className="btn-secondary" onClick={() => setShowRaw(!showRaw)} type="button">
                   <Icon name="braces" />
                   {showRaw ? "Hide raw output" : "View raw output"}
+                </button>
+                <button className="btn-secondary" onClick={() => setShowShareModal(true)} type="button">
+                  <Icon name="file-text" />
+                  <span>Share / Export Report</span>
                 </button>
                 {streamingUrl && (
                   <a className="btn-secondary" href={streamingUrl} target="_blank" rel="noreferrer">
                     <Icon name="external-link" />
-                    Open live browser replay
+                    Open sandbox replay
                   </a>
                 )}
               </div>
 
-              {showRaw && <pre className="raw-output-viewer">{result.rawAgentOutput || "No raw output recorded."}</pre>}
+              {showRaw && (
+                <pre className="raw-output-viewer">{result.rawAgentOutput || "No raw output recorded."}</pre>
+              )}
             </div>
           )}
         </div>
       </section>
+
+      {/* Multi-URL Selection Modal */}
+      {showMultiUrlModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="multi-url-title">
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <div className="modal-title-row">
+                <Icon name="radar" />
+                <h3 id="multi-url-title" className="modal-title">
+                  Multiple Destination Links Detected
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowMultiUrlModal(false)}
+                aria-label="Close modal"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginTop: 0 }}>
+                AheadGuard does not arbitrarily pick an initial link. Attackers frequently embed legitimate links alongside
+                phishing destinations. Choose which destination to inspect in the sandbox:
+              </p>
+
+              <div className="url-choice-list">
+                {detectedUrls.map((u, i) => {
+                  let host = u;
+                  try {
+                    host = new URL(u).hostname;
+                  } catch {
+                    // Fallback
+                  }
+                  return (
+                    <label
+                      key={i}
+                      className={`url-choice-label ${selectedMultiUrl === u ? "selected" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        name="multi-url-target"
+                        value={u}
+                        checked={selectedMultiUrl === u}
+                        onChange={() => setSelectedMultiUrl(u)}
+                        className="url-choice-radio"
+                      />
+                      <div className="url-choice-content">
+                        <div className="url-choice-url">{u}</div>
+                        <div className="url-choice-domain">Host: {host}</div>
+                      </div>
+                    </label>
+                  );
+                })}
+
+                {/* Option for Text-Only analysis without web sandbox */}
+                <label
+                  className={`url-choice-label ${selectedMultiUrl === "__TEXT_ONLY__" ? "selected" : ""}`}
+                >
+                  <input
+                    type="radio"
+                    name="multi-url-target"
+                    value="__TEXT_ONLY__"
+                    checked={selectedMultiUrl === "__TEXT_ONLY__"}
+                    onChange={() => setSelectedMultiUrl("__TEXT_ONLY__")}
+                    className="url-choice-radio"
+                  />
+                  <div className="url-choice-content">
+                    <div className="url-choice-url">Analyze message text only</div>
+                    <div className="url-choice-domain">
+                      Skip web inspection; evaluate claims and recruitment fees from message text.
+                    </div>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={() => setShowMultiUrlModal(false)} type="button">
+                Cancel
+              </button>
+              <button className="btn-primary" onClick={handleConfirmMultiUrl} type="button">
+                <Icon name="scan-search" />
+                <span>Investigate Selected Target</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Share / Export Report Modal */}
+      {showShareModal && result && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+          <div className="modal-dialog">
+            <div className="modal-header">
+              <div className="modal-title-row">
+                <Icon name="file-text" />
+                <h3 id="share-modal-title" className="modal-title">
+                  Privacy-Safe Shareable Report
+                </h3>
+              </div>
+              <button
+                className="modal-close-btn"
+                onClick={() => setShowShareModal(false)}
+                aria-label="Close modal"
+                type="button"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p style={{ marginTop: 0, fontSize: "12px" }}>
+                AheadGuard strips sensitive query parameters (e.g. session tokens, auth keys, OTPs) and masks private
+                personal data (emails, phone numbers, government IDs) before export.
+              </p>
+
+              {copyStatus && (
+                <div
+                  style={{
+                    background: "rgba(16, 185, 129, 0.15)",
+                    color: "var(--risk-low-text)",
+                    padding: "8px 12px",
+                    borderRadius: "var(--radius-sm)",
+                    marginBottom: "10px",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                  }}
+                >
+                  ✓ {copyStatus}
+                </div>
+              )}
+
+              <pre className="share-preview-box">{formatReportMarkdown(result)}</pre>
+
+              <div className="share-action-row">
+                <button
+                  className="btn-primary"
+                  onClick={() => handleCopy(formatReportMarkdown(result), "Markdown")}
+                  type="button"
+                >
+                  <Icon name="file-text" />
+                  <span>Copy Markdown</span>
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={() =>
+                    handleCopy(
+                      `AheadGuard Report: ${result.riskOutcome.toUpperCase()} · ${result.outcomeReason} · Action: ${
+                        result.recommendedAction
+                      }`,
+                      "Summary"
+                    )
+                  }
+                  type="button"
+                >
+                  <span>Copy Summary</span>
+                </button>
+                <button className="btn-secondary" onClick={() => handleDownloadJson(result)} type="button">
+                  <Icon name="braces" />
+                  <span>Download JSON</span>
+                </button>
+                <button className="btn-secondary" onClick={() => window.print()} type="button">
+                  <Icon name="eye" />
+                  <span>Print / PDF</span>
+                </button>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={() => setShowShareModal(false)} type="button">
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Evidence Ledger / Local History */}
       <section className="ledger-panel">
@@ -766,9 +1780,7 @@ export default function Home() {
           <div className="ledger-info">
             <span className="section-kicker">03 / EVIDENCE LEDGER</span>
             <h3>Local Investigation History</h3>
-            <p>
-              User-controlled evidence records stored in your browser. Never transmitted to external servers.
-            </p>
+            <p>User-controlled evidence records stored locally in your browser. Never transmitted to external servers.</p>
           </div>
           <div className="ledger-action-controls">
             <button
@@ -819,11 +1831,17 @@ export default function Home() {
                 }}
               >
                 <div>
-                  <div className="record-url-text">{item.originalUrl}</div>
+                  <div className="record-url-text">{item.observedDestination?.finalUrl || item.originalUrl}</div>
                   <div className="record-meta-line">
                     <span>{new Date(item.timestamp).toLocaleTimeString()}</span>
                     <span>·</span>
                     <span>{item.observedDestination.submittedHost}</span>
+                    {item.claimedOrganization && (
+                      <>
+                        <span>·</span>
+                        <span style={{ color: "var(--cyan)" }}>{item.claimedOrganization}</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
@@ -870,7 +1888,7 @@ export default function Home() {
               <Icon name="eye" />
             </span>
             <strong>01. Notice</strong>
-            <span>Capture link or input event</span>
+            <span>Capture message, link, or offer</span>
           </div>
           <div className="step-arrow-divider">→</div>
           <div className="principle-step-col">
@@ -878,7 +1896,7 @@ export default function Home() {
               <Icon name="search-check" />
             </span>
             <strong>02. Investigate</strong>
-            <span>TinyFish constrained probe</span>
+            <span>Probe sandbox & verify registry</span>
           </div>
           <div className="step-arrow-divider">→</div>
           <div className="principle-step-col">
@@ -886,7 +1904,7 @@ export default function Home() {
               <Icon name="brain-circuit" />
             </span>
             <strong>03. Understand</strong>
-            <span>Deterministic policy engine</span>
+            <span>Claim-by-claim evidence ledger</span>
           </div>
           <div className="step-arrow-divider">→</div>
           <div className="principle-step-col">
@@ -894,7 +1912,7 @@ export default function Home() {
               <Icon name="shield-check" />
             </span>
             <strong>04. Protect</strong>
-            <span>Explain & recommend safer path</span>
+            <span>Direct to official independent routes</span>
           </div>
         </div>
       </section>
@@ -910,8 +1928,8 @@ export default function Home() {
           </span>
         </div>
         <p className="footer-copy">
-          AheadGuard AI Decision-Support Guardian. Grounded strictly in observable evidence. Does
-          not replace client-side antivirus or operating system safeguards.
+          AheadGuard AI Digital Trust & Scam Verification Guardian. Grounded strictly in observable evidence.
+          Does not replace client-side antivirus or operating system safeguards.
         </p>
         <span className="footer-pill">EVIDENCE-BACKED SAFETY GUARDIAN</span>
       </footer>
