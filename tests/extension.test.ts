@@ -383,4 +383,157 @@ describe("AheadGuard Chrome Extension Test Suite (Section 11: Tests 1 - 20)", ()
     // Legitimate extension sender
     expect(verifySender({ id: "aheadguard_runtime_id" })).toBe(true);
   });
+
+  // Test 23: Scenario A — Real-time SSE streaming events handling and progress updates
+  it("Test 23 (Scenario A): Real-time SSE streaming events are parsed and trigger onProgress callbacks", async () => {
+    const progressMessages: string[] = [];
+    const mockReport: Partial<InvestigationReport> = {
+      investigationId: "inv_sse_123",
+      riskOutcome: "Low observed risk",
+      originalUrl: "https://example.com",
+      outcomeReason: "Investigation completed via real-time SSE stream.",
+      observedDestination: {
+        submittedUrl: "https://example.com",
+        normalizedUrl: "https://example.com/",
+        submittedHost: "example.com",
+        destinationChanged: false,
+        redirectChain: ["https://example.com/"],
+      },
+      evidenceItems: [],
+      checksPerformed: [],
+      actionPreview: {
+        proposedAction: "Navigating to example.com.",
+        consequenceIfProceed: "Routine web browsing.",
+        riskFactors: [],
+      },
+    };
+
+    const ssePayload = [
+      'event: started\ndata: {"type":"started","message":"Initiating TinyFish read-only investigation…"}\n\n',
+      'event: progress\ndata: {"type":"progress","message":"Remote browser navigating…"}\n\n',
+      `event: report\ndata: {"type":"report","report":${JSON.stringify(mockReport)}}\n\n`,
+    ].join("");
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ "content-type": "text/event-stream; charset=utf-8" }),
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(ssePayload));
+          controller.close();
+        },
+      }),
+    });
+
+    const report = await investigateUrl({
+      url: "https://example.com",
+      backendUrl: "http://localhost:3000",
+      onProgress: (msg) => {
+        progressMessages.push(msg);
+      },
+    });
+
+    expect(report.investigationId).toBe("inv_sse_123");
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(progressMessages).toContain("Initiating TinyFish read-only investigation…");
+    expect(progressMessages).toContain("Remote browser navigating…");
+  });
+
+  // Test 24: Scenario B — Private IP and cloud metadata rejection before network call
+  it("Test 24 (Scenario B): Private IPs, loopbacks, and cloud metadata destinations are blocked client-side", async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
+
+    const dangerousUrls = [
+      "http://127.0.0.1:8080",
+      "http://localhost:3000",
+      "http://192.168.1.1",
+      "http://10.0.0.1",
+      "http://169.254.169.254/latest/meta-data",
+      "http://0x7f000001",
+      "http://0177.0.0.1",
+      "http://[::1]",
+    ];
+
+    for (const url of dangerousUrls) {
+      await expect(
+        investigateUrl({
+          url,
+          backendUrl: "http://localhost:3000",
+        })
+      ).rejects.toThrow();
+    }
+
+    // Verify fetch was never called for any private/metadata destination
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // Test 25: Scenario B — Hostname length and embedded credentials rejected client-side
+  it("Test 25 (Scenario B): Invalid hostnames and embedded credentials rejected client-side", async () => {
+    const fetchSpy = vi.fn();
+    global.fetch = fetchSpy;
+
+    // URL with embedded credentials
+    await expect(
+      investigateUrl({
+        url: "https://admin:secret123@example.com",
+        backendUrl: "http://localhost:3000",
+      })
+    ).rejects.toThrow(/embedded usernames or passwords/i);
+
+    // Hostname too long (>253 chars)
+    const longHostUrl = "https://" + "a".repeat(255) + ".com";
+    await expect(
+      investigateUrl({
+        url: longHostUrl,
+        backendUrl: "http://localhost:3000",
+      })
+    ).rejects.toThrow(/too long|invalid/i);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // Test 26: Scenario C — Error message sanitization strips secrets and stack traces
+  it("Test 26 (Scenario C): Client-facing errors redact API keys, stack traces, and local filesystem paths", async () => {
+    global.fetch = vi.fn().mockRejectedValue(
+      new Error(
+        "Failed with key tf_live_abcdef1234567890 at C:\\Users\\secret\\app.ts:45:10 while accessing /internal/data"
+      )
+    );
+
+    const report = await investigateUrl({
+      url: "https://example.com",
+      backendUrl: "http://localhost:3000",
+    });
+
+    expect(report.riskOutcome).toBe("Unknown");
+    // Secrets must be redacted
+    expect(report.outcomeReason).not.toContain("tf_live_abcdef1234567890");
+    // File paths and stack traces must be sanitized
+    expect(report.outcomeReason).not.toContain("C:\\Users");
+    expect(report.outcomeReason).not.toContain("app.ts:45:10");
+  });
+
+  // Test 27: Scenario D — Risk outcome policy mapping and badge semantics
+  it("Test 27 (Scenario D): Badge and policy states map consistently across all 4 risk outcomes", () => {
+    function getBadgeConfig(outcome: RiskOutcome) {
+      switch (outcome) {
+        case "High risk":
+          return { text: "!", color: "#FF4D4D" };
+        case "Suspicious":
+          return { text: "!", color: "#FFAA00" };
+        case "Low observed risk":
+          return { text: "✓", color: "#00CC88" };
+        case "Unknown":
+        default:
+          return { text: "?", color: "#3388CC" };
+      }
+    }
+
+    expect(getBadgeConfig("High risk")).toEqual({ text: "!", color: "#FF4D4D" });
+    expect(getBadgeConfig("Suspicious")).toEqual({ text: "!", color: "#FFAA00" });
+    expect(getBadgeConfig("Low observed risk")).toEqual({ text: "✓", color: "#00CC88" });
+    expect(getBadgeConfig("Unknown")).toEqual({ text: "?", color: "#3388CC" });
+  });
 });

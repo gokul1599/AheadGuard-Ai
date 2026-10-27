@@ -5,6 +5,9 @@ import type { ReactNode } from "react";
 import type { InvestigationReport, ClaimEvaluation } from "@/lib/types";
 import { createShareableReport, formatReportMarkdown, formatReportSummary } from "@/lib/share-report";
 import { extractUrlsFromText } from "@/lib/message-intelligence";
+import { DEMO_SCENARIOS, getDemoScenario, isDemoReport } from "@/lib/demo-data";
+import { TrustGapMap } from "@/components/TrustGapMap";
+import { EvidenceCoverageCard } from "@/components/EvidenceCoverageCard";
 
 type AnalysisMode = "link" | "message" | "job" | "report";
 
@@ -82,8 +85,9 @@ export default function Home() {
   const [streamingUrl, setStreamingUrl] = useState<string | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  const [activeTab, setActiveTab] = useState<"intel" | "claims" | "routes" | "evidence" | "facts" | "checks">("intel");
+  const [activeTab, setActiveTab] = useState<"trustgap" | "intel" | "claims" | "routes" | "evidence" | "facts" | "checks">("trustgap");
   const [claimFilter, setClaimFilter] = useState<ClaimEvaluation | "All">("All");
+  const [activeDemoScenarioId, setActiveDemoScenarioId] = useState<string | null>(null);
 
   // Multi-URL modal state
   const [showMultiUrlModal, setShowMultiUrlModal] = useState(false);
@@ -142,8 +146,37 @@ export default function Home() {
     }
   }, []);
 
+  const handleSelectDemoScenario = (scenarioId: string) => {
+    const scen = getDemoScenario(scenarioId);
+    if (!scen) return;
+    setResult(JSON.parse(JSON.stringify(scen.report)));
+    setActiveDemoScenarioId(scen.id);
+    setStatus(`Loaded offline demonstration scenario: ${scen.name}`);
+    setError(null);
+    setProgressLog([]);
+    setLoading(false);
+    setActiveTab("trustgap");
+
+    // Scroll smoothly to results
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        const assessmentEl = document.querySelector(".assessment-container");
+        if (assessmentEl) {
+          assessmentEl.scrollIntoView({ behavior: "smooth" });
+        }
+      }, 50);
+    }
+  };
+
+  const handleExitDemoMode = () => {
+    setResult(null);
+    setActiveDemoScenarioId(null);
+    setStatus("Ready for digital trust & scam verification");
+  };
+
   const saveToLedger = (report: InvestigationReport) => {
     if (isHistoryPaused) return;
+    if (report.isDemo) return; // Do not save offline demo reports to real evidence history
     try {
       setHistory((prev) => {
         const filtered = prev.filter((item) => item.investigationId !== report.investigationId);
@@ -521,6 +554,48 @@ export default function Home() {
             </span>
             <span>ZERO SENSITIVE DATA LOGGING</span>
           </div>
+        </div>
+      </section>
+
+      {/* Offline Demonstration Scenarios */}
+      <section className="demo-scenarios-strip" aria-label="Interactive Demo Scenarios">
+        <div className="demo-scenarios-header">
+          <div className="demo-scenarios-title">
+            <Icon name="sparkles" /> INTERACTIVE OFFLINE DEMO SCENARIOS
+          </div>
+          <span style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+            Instant offline evaluation · Zero TinyFish API calls · Ground-truth verified
+          </span>
+        </div>
+        <div className="demo-scenarios-grid">
+          {DEMO_SCENARIOS.map((scen) => (
+            <button
+              key={scen.id}
+              type="button"
+              className={`demo-scenario-card ${activeDemoScenarioId === scen.id ? "active" : ""}`}
+              onClick={() => handleSelectDemoScenario(scen.id)}
+            >
+              <div className="demo-card-head">
+                <span className="demo-card-title">{scen.name}</span>
+                <span
+                  className={`intel-badge ${
+                    scen.category === "verified"
+                      ? "badge-match"
+                      : scen.category === "suspicious"
+                      ? "badge-mismatch"
+                      : "badge-unverified"
+                  }`}
+                  style={{ fontSize: "10px", padding: "1px 6px" }}
+                >
+                  {scen.badge}
+                </span>
+              </div>
+              <p className="demo-card-summary">{scen.summary}</p>
+              <div className="demo-card-meta">
+                <span>{scen.targetOrg}</span>
+              </div>
+            </button>
+          ))}
         </div>
       </section>
 
@@ -1015,6 +1090,21 @@ export default function Home() {
           {/* Active Result View */}
           {result && (
             <div className="assessment-container">
+              {/* Sticky Demo Banner if viewing offline demo data */}
+              {isDemoReport(result) && (
+                <div className="demo-banner-sticky" role="region" aria-label="Demo mode notice">
+                  <div className="demo-banner-left">
+                    <span className="demo-badge-pill">⚠️ DEMO DATA — NOT A LIVE INVESTIGATION</span>
+                    <span className="demo-banner-text">
+                      Viewing illustrative demonstration data ({result.claimedOrganization || result.observedDestination.submittedHost}). No live network request or crawler inspection occurred.
+                    </span>
+                  </div>
+                  <button type="button" className="demo-exit-btn" onClick={handleExitDemoMode}>
+                    Exit Demo Mode
+                  </button>
+                </div>
+              )}
+
               {/* Risk Banner */}
               <div className={`risk-banner ${riskClass}`} role="region" aria-label="Risk outcome summary">
                 <div className="risk-banner-icon">
@@ -1124,17 +1214,58 @@ export default function Home() {
                 </div>
               )}
 
-              {/* Action Preview */}
+              {/* Evidence Coverage & Integrity Card */}
+              <EvidenceCoverageCard report={result} />
+
+              {/* Action Preview & Safe Action Planner */}
               <div className="action-preview-card">
                 <div className="action-preview-head">
                   <span className="action-preview-title">
-                    <Icon name="eye" /> Action Preview: Consequence Simulation
+                    <Icon name="eye" /> Safe Action Planner: Impact & Next Steps
                   </span>
                   <span className="action-badge">{result.actionPreview.proposedAction}</span>
                 </div>
                 <p className="action-consequence-text">{result.actionPreview.consequenceIfProceed}</p>
+
+                {/* Grounded Safety Checklists & Traps Gate */}
+                <div className="action-checklist">
+                  {intel?.recruitmentFeeWarning?.detected && (
+                    <div className="checklist-item critical">
+                      <Icon name="alert-triangle" />
+                      <span>
+                        <strong>CRITICAL SAFETY BLOCK:</strong> Do not transfer the requested fee or security deposit. Legitimate corporate recruitment never involves candidate payments.
+                      </span>
+                    </div>
+                  )}
+
+                  {intel?.companyIdentity?.status === "Identity mismatch" && (
+                    <div className="checklist-item critical">
+                      <Icon name="shield-alert" />
+                      <span>
+                        <strong>LOOKALIKE CHANNEL CAUTION:</strong> The observed domain does not belong to the claimed organization. Do not proceed via recruiter links; independently confirm openings on the official corporate careers portal.
+                      </span>
+                    </div>
+                  )}
+
+                  {intel?.sensitiveDataRequests && intel.sensitiveDataRequests.length > 0 && (
+                    <div className="checklist-item caution">
+                      <Icon name="lock" />
+                      <span>
+                        <strong>CREDENTIAL SHIELD:</strong> Do not upload passport scans, government IDs, OTPs, or banking verification screenshots to this destination.
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="checklist-item">
+                    <Icon name="check-circle" />
+                    <span>
+                      <strong>Safe Recommendation:</strong> {result.recommendedAction}
+                    </span>
+                  </div>
+                </div>
+
                 {result.actionPreview.riskFactors.length > 0 && (
-                  <ul className="risk-factor-list">
+                  <ul className="risk-factor-list" style={{ marginTop: "12px" }}>
                     {result.actionPreview.riskFactors.map((factor, i) => (
                       <li key={i}>{factor}</li>
                     ))}
@@ -1184,6 +1315,16 @@ export default function Home() {
 
               {/* Navigation Tabs */}
               <div className="tab-navigation" role="tablist">
+                <button
+                  className={`tab-btn ${activeTab === "trustgap" ? "active" : ""}`}
+                  onClick={() => setActiveTab("trustgap")}
+                  role="tab"
+                  aria-selected={activeTab === "trustgap"}
+                  type="button"
+                >
+                  <Icon name="map" />
+                  <span>Trust Gap Map</span>
+                </button>
                 {intel && (
                   <>
                     <button
@@ -1243,6 +1384,13 @@ export default function Home() {
                   Checks ({result.checksPerformed.length})
                 </button>
               </div>
+
+              {/* TAB: Trust Gap Map */}
+              {activeTab === "trustgap" && (
+                <div role="tabpanel">
+                  <TrustGapMap report={result} />
+                </div>
+              )}
 
               {/* TAB: Scam Intelligence Overview */}
               {activeTab === "intel" && intel && (
@@ -1768,6 +1916,15 @@ export default function Home() {
                 </div>
               )}
 
+              {isDemoReport(result) && (
+                <div className="demo-banner-sticky" style={{ marginBottom: "10px", padding: "8px 12px" }}>
+                  <span className="demo-badge-pill">⚠️ DEMO EXPORT</span>
+                  <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                    Exports retain the mandatory offline demonstration disclaimer header to prevent misrepresentation.
+                  </span>
+                </div>
+              )}
+
               <pre className="share-preview-box">{formatReportMarkdown(result)}</pre>
 
               <div className="share-action-row">
@@ -2139,6 +2296,18 @@ function Icon({ name }: { name: string }) {
       <>
         <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
         <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
+      </>
+    ),
+    sparkles: (
+      <>
+        <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z" />
+      </>
+    ),
+    map: (
+      <>
+        <polygon points="3 6 9 3 15 6 21 3 21 18 15 21 9 18 3 21" />
+        <line x1="9" x2="9" y1="3" y2="18" />
+        <line x1="15" x2="15" y1="6" y2="21" />
       </>
     ),
   };

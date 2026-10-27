@@ -227,6 +227,10 @@ export interface InvestigationReport {
   extractedUrls?: string[];
   selectedTargetUrl?: string;
   analysisMode?: "link" | "message" | "job" | "report";
+  // Offline Demo Mode flags
+  isDemo?: boolean;
+  demoScenarioId?: string;
+  demoDisclaimer?: string;
 }
 
 export interface ProgressEvent {
