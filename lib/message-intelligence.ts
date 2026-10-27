@@ -68,7 +68,7 @@ export function redactSensitivePii(text: string): { redactedText: string; redact
   let current = text;
 
   // 1. Credit/Debit Card numbers (13-16 digits with spaces or hyphens) - check BEFORE Aadhaar so 16-digit cards aren't truncated into 12-digit Aadhaar matches
-  const cardRegex = /\b(?:\d{4}[-\s]?){3}\d{4}\b/g;
+  const cardRegex = /\b(?:\d{4}[-\s]?){3}\d{4}\b|\b\d{4}[-\s]?\d{6}[-\s]?\d{5}\b/g;
   if (cardRegex.test(current)) {
     redactions.push("Credit/Debit card number redacted");
     current = current.replace(cardRegex, "[CARD NUMBER REDACTED]");
@@ -81,39 +81,73 @@ export function redactSensitivePii(text: string): { redactedText: string; redact
     current = current.replace(emailRegex, "[EMAIL REDACTED]");
   }
 
-  // 3. Phone numbers (international, US, Indian 10-digit formats)
-  const phoneRegex = /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b|\b(?:\+91[-.\s]?)?[6-9]\d{9}\b/g;
+  // 3. Bank Account & IBAN Identifiers (prioritized before generic phone numbers)
+  const ibanRegex = /\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b/g;
+  if (ibanRegex.test(current)) {
+    redactions.push("Bank account (IBAN) redacted");
+    current = current.replace(ibanRegex, "[BANK ACCOUNT REDACTED]");
+  }
+
+  const bankAcctRegex = /(?:bank\s+account|account\s+number|a\/c\s+no|acct\s*#|account\s+)\s*[:=]?\s*([0-9]{8,18})\b/gi;
+  if (bankAcctRegex.test(current)) {
+    redactions.push("Bank account number redacted");
+    current = current.replace(bankAcctRegex, (match, acct) => {
+      return match.replace(acct, "[BANK ACCOUNT REDACTED]");
+    });
+  }
+
+  // 4. Phone numbers (international, US, Indian 10-digit, UK formats)
+  const phoneRegex =
+    /(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b|\b(?:\+91[-.\s]?)?[6-9]\d{9}\b|(?:\+\d{1,4}[-.\s]?(?:\(?\d{1,5}\)?[-.\s]?){1,4}\d{2,6}\b)/g;
   if (phoneRegex.test(current)) {
     redactions.push("Phone number redacted");
     current = current.replace(phoneRegex, "[PHONE REDACTED]");
   }
 
-  // 4. Indian PAN Card (5 letters, 4 digits, 1 letter)
+  // 5. Indian PAN Card (5 letters, 4 digits, 1 letter)
   const panRegex = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/g;
   if (panRegex.test(current)) {
     redactions.push("Government ID (PAN) redacted");
     current = current.replace(panRegex, "[GOV ID REDACTED]");
   }
 
-  // 5. Indian Aadhaar Card (exactly 12 digits, 3 groups of 4 digits, not part of a 16-digit card)
+  // 6. Indian Aadhaar Card (exactly 12 digits, 3 groups of 4 digits, not part of a 16-digit card)
   const aadhaarRegex = /\b\d{4}\s\d{4}\s\d{4}\b(?!\s\d{4})/g;
   if (aadhaarRegex.test(current)) {
     redactions.push("Government ID (Aadhaar) redacted");
     current = current.replace(aadhaarRegex, "[GOV ID REDACTED]");
   }
 
-  // 6. US Social Security Number (SSN: 3-2-4 digits)
+  // 7. International Government IDs (US SSN: 3-2-4 digits, UK National Insurance Number)
   const ssnRegex = /\b\d{3}-\d{2}-\d{4}\b/g;
   if (ssnRegex.test(current)) {
     redactions.push("Government ID (SSN) redacted");
     current = current.replace(ssnRegex, "[GOV ID REDACTED]");
   }
 
-  // 7. OTP / Verification codes following explicit OTP labels
-  const otpRegex = /(?:otp|one[- ]time[- ]password|verification[- ]code|security[- ]pin)\s*(?:is|:)?\s*([0-9]{4,8})/gi;
+  const ninoRegex = /\b[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z]\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]\b/gi;
+  if (ninoRegex.test(current)) {
+    redactions.push("Government ID (NINO) redacted");
+    current = current.replace(ninoRegex, "[GOV ID REDACTED]");
+  }
+
+  // 8. Passwords, Credentials, and Secret Keys declared in text
+  const credentialRegex =
+    /(?:password|passwd|pwd|passcode|secret[- ]key|api[- ]key|access[- ]token|private[- ]key)\s*(?:is\s+|:\s*|=\s*|\s+)([^\s,.;]+)/gi;
+  if (credentialRegex.test(current)) {
+    redactions.push("Password / credential redacted");
+    current = current.replace(credentialRegex, (match, credVal) => {
+      return match.replace(credVal, "[CREDENTIAL REDACTED]");
+    });
+  }
+
+  // 9. OTP / Verification codes following explicit OTP labels
+  const otpRegex = /(?:otp|one[- ]time[- ]password|verification[- ]code|security[- ]pin|auth[- ]code|login[- ]code)\s*(?:is|:|=)?\s*([0-9a-zA-Z]{4,8})\b/gi;
   if (otpRegex.test(current)) {
     redactions.push("OTP / verification code redacted");
-    current = current.replace(otpRegex, "OTP: [CODE REDACTED]");
+    current = current.replace(otpRegex, (match, code) => {
+      return match.replace(code, "[CODE REDACTED]");
+    });
   }
 
   return { redactedText: current, redactions: Array.from(new Set(redactions)) };

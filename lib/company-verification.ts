@@ -106,21 +106,50 @@ export function verifyCompanyIdentity(params: {
 
   const evidenceSources: ClaimSourceReference[] = [];
 
-  // If user provided a careers URL, validate it
+  // If user provided a careers URL, validate it and check if it belongs to approved corporate domains
   let validUserCareersUrl: string | undefined;
+  let isUserCareersVerified = false;
   if (userProvidedCareersUrl) {
     const safety = validateAndNormalizeUrl(userProvidedCareersUrl);
     if (safety.valid) {
       validUserCareersUrl = safety.normalizedUrl;
-      evidenceSources.push({
-        title: "User-Provided Official Careers URL",
-        url: validUserCareersUrl,
-        sourceType: "user_provided_careers_url",
-        retrievedAt: now,
-        snippet: "Candidate or user referenced this URL as the official careers source.",
-      });
+      try {
+        const userHost = new URL(validUserCareersUrl).hostname.toLowerCase();
+        if (
+          matchedBrand &&
+          matchedBrand.approvedDomains.some(
+            (d) => isDomainOrSubdomain(userHost, d) || isSameRegistrableDomain(userHost, d)
+          )
+        ) {
+          isUserCareersVerified = true;
+        }
+      } catch {
+        isUserCareersVerified = false;
+      }
+
+      if (isUserCareersVerified) {
+        evidenceSources.push({
+          title: "Verified User-Provided Official Careers URL",
+          url: validUserCareersUrl,
+          sourceType: "official_careers_page",
+          retrievedAt: now,
+          snippet: `Candidate careers URL was verified against approved corporate domains for ${matchedBrand?.canonicalName}.`,
+        });
+      } else {
+        evidenceSources.push({
+          title: "User-Provided Candidate Careers Link (Unverified)",
+          url: validUserCareersUrl,
+          sourceType: "user_provided_careers_url",
+          retrievedAt: now,
+          snippet: "Candidate careers URL supplied by user has not been independently verified against official corporate domains.",
+        });
+      }
     }
   }
+
+  // Official careers URL MUST only be from brand registry or verified user-supplied corporate domain
+  const verifiedOfficialCareersUrl =
+    (isUserCareersVerified ? validUserCareersUrl : undefined) || matchedBrand?.officialCareersUrl;
 
   // Scenario A: No destination URL provided (message analysis only)
   if (!destinationHost) {
@@ -141,8 +170,10 @@ export function verifyCompanyIdentity(params: {
         isOfficialCorporateDomain: false,
         isThirdPartyPlatform: false,
         officialDomains: matchedBrand.approvedDomains,
-        officialCareersUrl: matchedBrand.officialCareersUrl || validUserCareersUrl,
+        officialCareersUrl: verifiedOfficialCareersUrl,
         officialContactUrl: matchedBrand.officialContactUrl,
+        candidateCareersUrl: validUserCareersUrl,
+        isUserProvidedCareersUrlVerified: isUserCareersVerified,
         verifiedAt: now,
         evidenceSources,
       };
@@ -158,7 +189,9 @@ export function verifyCompanyIdentity(params: {
       isOfficialCorporateDomain: false,
       isThirdPartyPlatform: false,
       officialDomains: [],
-      officialCareersUrl: validUserCareersUrl,
+      officialCareersUrl: verifiedOfficialCareersUrl,
+      candidateCareersUrl: validUserCareersUrl,
+      isUserProvidedCareersUrlVerified: isUserCareersVerified,
       verifiedAt: now,
       evidenceSources,
     };
@@ -185,8 +218,10 @@ export function verifyCompanyIdentity(params: {
       isThirdPartyPlatform: true,
       platformName: platformCheck.platformName,
       officialDomains: matchedBrand ? matchedBrand.approvedDomains : [],
-      officialCareersUrl: matchedBrand?.officialCareersUrl || validUserCareersUrl,
+      officialCareersUrl: verifiedOfficialCareersUrl,
       officialContactUrl: matchedBrand?.officialContactUrl,
+      candidateCareersUrl: validUserCareersUrl,
+      isUserProvidedCareersUrlVerified: isUserCareersVerified,
       verifiedAt: now,
       evidenceSources,
     };
@@ -218,8 +253,10 @@ export function verifyCompanyIdentity(params: {
         isOfficialCorporateDomain: true,
         isThirdPartyPlatform: false,
         officialDomains: matchedBrand.approvedDomains,
-        officialCareersUrl: matchedBrand.officialCareersUrl || validUserCareersUrl,
+        officialCareersUrl: verifiedOfficialCareersUrl,
         officialContactUrl: matchedBrand.officialContactUrl,
+        candidateCareersUrl: validUserCareersUrl,
+        isUserProvidedCareersUrlVerified: isUserCareersVerified,
         verifiedAt: now,
         evidenceSources,
       };
@@ -241,8 +278,10 @@ export function verifyCompanyIdentity(params: {
         isOfficialCorporateDomain: false,
         isThirdPartyPlatform: false,
         officialDomains: matchedBrand.approvedDomains,
-        officialCareersUrl: matchedBrand.officialCareersUrl || validUserCareersUrl,
+        officialCareersUrl: verifiedOfficialCareersUrl,
         officialContactUrl: matchedBrand.officialContactUrl,
+        candidateCareersUrl: validUserCareersUrl,
+        isUserProvidedCareersUrlVerified: isUserCareersVerified,
         verifiedAt: now,
         evidenceSources,
       };
@@ -262,8 +301,10 @@ export function verifyCompanyIdentity(params: {
       isOfficialCorporateDomain: false,
       isThirdPartyPlatform: false,
       officialDomains: matchedBrand.approvedDomains,
-      officialCareersUrl: matchedBrand.officialCareersUrl || validUserCareersUrl,
+      officialCareersUrl: verifiedOfficialCareersUrl,
       officialContactUrl: matchedBrand.officialContactUrl,
+      candidateCareersUrl: validUserCareersUrl,
+      isUserProvidedCareersUrlVerified: isUserCareersVerified,
       verifiedAt: now,
       evidenceSources,
     };
@@ -284,7 +325,9 @@ export function verifyCompanyIdentity(params: {
       isOfficialCorporateDomain: false,
       isThirdPartyPlatform: false,
       officialDomains: [],
-      officialCareersUrl: validUserCareersUrl,
+      officialCareersUrl: verifiedOfficialCareersUrl,
+      candidateCareersUrl: validUserCareersUrl,
+      isUserProvidedCareersUrlVerified: isUserCareersVerified,
       verifiedAt: now,
       evidenceSources,
     };
@@ -303,10 +346,82 @@ export function verifyCompanyIdentity(params: {
     isOfficialCorporateDomain: false,
     isThirdPartyPlatform: false,
     officialDomains: [],
-    officialCareersUrl: validUserCareersUrl,
+    officialCareersUrl: verifiedOfficialCareersUrl,
+    candidateCareersUrl: validUserCareersUrl,
+    isUserProvidedCareersUrlVerified: isUserCareersVerified,
     verifiedAt: now,
     evidenceSources,
   };
+}
+
+/**
+ * Helper to test whether substantive words in claimedRole appear in candidate text.
+ * Requires specific, attributable role tokens on word boundaries.
+ * Generic role terms ("job", "intern", "careers") or generic page titles alone
+ * cannot falsely establish that a specific vacancy exists.
+ */
+export function matchesRoleText(claimedRole?: string, candidateText?: string): boolean {
+  if (!claimedRole || !candidateText) return false;
+  const roleClean = claimedRole.trim();
+  const textClean = candidateText.trim();
+  if (roleClean.length < 3 || textClean.length === 0) return false;
+
+  // Generic recruitment terms that cannot alone establish a specific role vacancy
+  const genericRecruitmentTerms = new Set([
+    "and",
+    "or",
+    "the",
+    "a",
+    "an",
+    "for",
+    "at",
+    "in",
+    "to",
+    "of",
+    "with",
+    "is",
+    "intern",
+    "interns",
+    "internship",
+    "internships",
+    "job",
+    "jobs",
+    "role",
+    "roles",
+    "position",
+    "positions",
+    "opening",
+    "openings",
+    "opportunity",
+    "opportunities",
+    "career",
+    "careers",
+    "employment",
+    "work",
+    "apply",
+    "application",
+    "hiring",
+    "recruitment",
+    "portal",
+  ]);
+
+  const tokens = roleClean
+    .split(/[\s\-_/,\.:;]+/)
+    .map((t) => t.trim().toLowerCase())
+    .filter((t) => t.length > 2 && !genericRecruitmentTerms.has(t));
+
+  // If claimedRole has NO specific substantive role keywords (e.g. user just said "Job" or "Internship"),
+  // generic page titles or site headers must NOT falsely match it as a verified specific vacancy.
+  if (tokens.length === 0) {
+    return false;
+  }
+
+  // All substantive tokens must appear as distinct whole words in candidate text
+  return tokens.every((token) => {
+    const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const wordPattern = new RegExp(`(?:^|[^a-zA-Z0-9])${escaped}(?:$|[^a-zA-Z0-9])`, "i");
+    return wordPattern.test(textClean);
+  });
 }
 
 /**
@@ -322,6 +437,13 @@ export function verifyJobListing(params: {
   jobListingUrl?: string;
   companyIdentity: CompanyIdentityVerification;
   feeWarningPresent: boolean;
+  directEvidence?: {
+    roleMatched?: boolean;
+    vacancyConfirmed?: boolean;
+    evidenceSnippet?: string;
+  };
+  observedPageTitle?: string;
+  observedPageSnippet?: string;
 }): JobVerificationResult {
   const {
     claimedRole,
@@ -332,6 +454,9 @@ export function verifyJobListing(params: {
     jobListingUrl,
     companyIdentity,
     feeWarningPresent,
+    directEvidence,
+    observedPageTitle,
+    observedPageSnippet,
   } = params;
 
   const now = new Date().toISOString();
@@ -347,7 +472,7 @@ export function verifyJobListing(params: {
       recruiterContact,
       status: "Listing contradicted",
       explanation:
-        "The job offer demands an upfront application or training fee. This directly contradicts standard corporate recruitment practices and employment laws.",
+        "The job offer demands an upfront application or training fee. This directly contradicts standard corporate recruitment practices where legitimate employers do not charge applicants fees for hiring or training.",
       checkedSources,
       verifiedAt: now,
       limitations:
@@ -373,14 +498,30 @@ export function verifyJobListing(params: {
 
   // 3. Official domain match or recognized third-party recruitment platform
   if (companyIdentity.status === "Official domain match" || companyIdentity.status === "Third-party platform") {
-    if (jobListingUrl) {
-      checkedSources.push({
-        title: "Provided Job Listing URL",
-        url: jobListingUrl,
-        sourceType: companyIdentity.status === "Official domain match" ? "official_careers_page" : "external_source",
-        retrievedAt: now,
-        snippet: `Application hosted on verified destination: ${companyIdentity.destinationHost}`,
-      });
+    // Check for direct evidence or crawled page title/snippet matching the specific role
+    const hasRoleDirectEvidence = Boolean(directEvidence?.roleMatched || directEvidence?.vacancyConfirmed);
+    const hasRolePageMatch = Boolean(
+      matchesRoleText(claimedRole, observedPageTitle) ||
+      matchesRoleText(claimedRole, observedPageSnippet) ||
+      matchesRoleText(claimedRole, directEvidence?.evidenceSnippet)
+    );
+    const isVacancyConfirmed = hasRoleDirectEvidence || hasRolePageMatch;
+
+    if (isVacancyConfirmed) {
+      if (jobListingUrl) {
+        checkedSources.push({
+          title: "Verified Vacancy Listing URL",
+          url: jobListingUrl,
+          sourceType: companyIdentity.status === "Official domain match" ? "official_careers_page" : "external_source",
+          retrievedAt: now,
+          snippet: `Application hosted on authentic destination: ${companyIdentity.destinationHost}`,
+        });
+      }
+
+      const platformLabel =
+        companyIdentity.status === "Official domain match"
+          ? `authentic corporate recruitment portal on ${companyIdentity.destinationHost}`
+          : `${companyIdentity.platformName || "recruitment platform"} (${companyIdentity.destinationHost})`;
 
       return {
         claimedRole,
@@ -389,14 +530,44 @@ export function verifyJobListing(params: {
         claimedCompensation,
         recruiterContact,
         status: "Listing matched",
-        explanation: `The application link directs to an authentic recruitment portal on ${companyIdentity.destinationHost}. No recruitment fees or credential harvesting were observed.`,
-        matchedListingUrl: jobListingUrl,
+        explanation: `The specific vacancy "${claimedRole || "unspecified"}" was verified on ${platformLabel}. No recruitment fees or credential harvesting were observed.`,
+        matchedListingUrl: jobListingUrl || companyIdentity.officialCareersUrl,
         checkedSources,
         verifiedAt: now,
         limitations:
-          "Listing link verified on authentic recruitment infrastructure. Confirm specific recruiter identity if contacted through unofficial email addresses.",
+          "Listing link and vacancy confirmed on authentic recruitment infrastructure. Confirm specific recruiter identity if contacted through unofficial email addresses.",
       };
     }
+
+    // Employer domain or ATS recognized, BUT specific vacancy is not verified
+    if (jobListingUrl) {
+      checkedSources.push({
+        title: "Observed Application Destination",
+        url: jobListingUrl,
+        sourceType: companyIdentity.status === "Official domain match" ? "official_careers_page" : "external_source",
+        retrievedAt: now,
+        snippet: `Destination verified on ${companyIdentity.destinationHost}, but specific vacancy was not verified in page metadata.`,
+      });
+    }
+
+    const infrastructureLabel =
+      companyIdentity.isThirdPartyPlatform && companyIdentity.platformName
+        ? `Recruitment platform recognized (${companyIdentity.platformName} at ${companyIdentity.destinationHost})`
+        : `Employer domain recognized (${companyIdentity.destinationHost})`;
+
+    return {
+      claimedRole,
+      claimedEmployer: claimedEmployer || companyIdentity.claimedOrganization,
+      claimedLocation,
+      claimedCompensation,
+      recruiterContact,
+      status: "Listing not found — unverified",
+      explanation: `${infrastructureLabel}; specific vacancy not independently verified. Destination belongs to authentic recruitment infrastructure, but AheadGuard could not independently verify that the specific vacancy${claimedRole ? ` "${claimedRole}"` : ""} exists without an official requisition lookup.`,
+      checkedSources,
+      verifiedAt: now,
+      limitations:
+        "Authentic recruitment infrastructure confirmed, but specific vacancy requisition not verified. Requisition IDs and job openings should be verified directly through official portal search.",
+    };
   }
 
   // 4. Default: Listing not found — unverified

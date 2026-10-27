@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import type { InvestigationReport, ClaimEvaluation } from "@/lib/types";
-import { createShareableReport, formatReportMarkdown } from "@/lib/share-report";
+import { createShareableReport, formatReportMarkdown, formatReportSummary } from "@/lib/share-report";
 import { extractUrlsFromText } from "@/lib/message-intelligence";
 
 type AnalysisMode = "link" | "message" | "job" | "report";
@@ -1265,6 +1265,44 @@ export default function Home() {
                     )}
                   </div>
 
+                  {/* Specific Vacancy Verification Breakdown */}
+                  {intel.jobVerification && (
+                    <div className="intel-section">
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
+                        <span className="intel-section-title" style={{ margin: 0 }}>
+                          <Icon name="briefcase" /> Specific Vacancy Verification
+                        </span>
+                        <span
+                          className={`intel-badge ${
+                            intel.jobVerification.status === "Listing matched"
+                              ? "badge-match"
+                              : intel.jobVerification.status === "Listing contradicted"
+                              ? "badge-mismatch"
+                              : intel.jobVerification.status === "Listing not found — unverified"
+                              ? "badge-unverified"
+                              : "badge-neutral"
+                          }`}
+                        >
+                          {intel.jobVerification.status}
+                        </span>
+                      </div>
+                      <p style={{ margin: "0 0 8px", fontSize: "13px", color: "var(--text-secondary)" }}>
+                        {intel.jobVerification.explanation}
+                      </p>
+                      {intel.jobVerification.claimedRole && (
+                        <div style={{ fontSize: "12px", color: "var(--text-muted)", marginBottom: "4px" }}>
+                          Advertised Role: <strong style={{ color: "var(--text-primary)" }}>{intel.jobVerification.claimedRole}</strong>
+                          {intel.jobVerification.claimedEmployer ? ` at ${intel.jobVerification.claimedEmployer}` : ""}
+                        </div>
+                      )}
+                      {intel.jobVerification.limitations && (
+                        <div style={{ fontSize: "11px", color: "var(--text-dim)", fontStyle: "italic", marginTop: "6px" }}>
+                          Verification Scope: {intel.jobVerification.limitations}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Payment Risks */}
                   {intel.paymentRisks.length > 0 && (
                     <div className="intel-section">
@@ -1743,14 +1781,7 @@ export default function Home() {
                 </button>
                 <button
                   className="btn-secondary"
-                  onClick={() =>
-                    handleCopy(
-                      `AheadGuard Report: ${result.riskOutcome.toUpperCase()} · ${result.outcomeReason} · Action: ${
-                        result.recommendedAction
-                      }`,
-                      "Summary"
-                    )
-                  }
+                  onClick={() => handleCopy(formatReportSummary(result), "Summary")}
                   type="button"
                 >
                   <span>Copy Summary</span>
@@ -2102,6 +2133,12 @@ function Icon({ name }: { name: string }) {
     trash: (
       <>
         <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      </>
+    ),
+    briefcase: (
+      <>
+        <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+        <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16" />
       </>
     ),
   };

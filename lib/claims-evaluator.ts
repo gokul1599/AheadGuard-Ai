@@ -79,11 +79,16 @@ export function evaluateAllClaims(params: {
           retrievedAt: now,
         };
       } else {
+        const unverifiedDetail =
+          companyIdentity.isOfficialCorporateDomain || companyIdentity.isThirdPartyPlatform
+            ? `Employer domain or recruitment platform (${companyIdentity.destinationHost}) is recognized, but specific vacancy requisition could not be independently verified.`
+            : "The advertised position could not be verified on an independently authenticated corporate careers portal. This is unverified, not definitive proof of fraud.";
         return {
           ...claim,
           evaluation: "Unverified",
-          explanation: "The advertised position could not be verified on a public corporate careers index. This is unverified, not definitive proof of fraud.",
-          sourceType: "none",
+          explanation: unverifiedDetail,
+          sourceType: companyIdentity.officialDomains.length > 0 ? "official_corporate_site" : "none",
+          sourceUrl: companyIdentity.officialDomains[0] ? `https://${companyIdentity.officialDomains[0]}` : undefined,
           retrievedAt: now,
         };
       }
@@ -182,6 +187,19 @@ export function generateIndependentVerificationRoutes(params: {
       relevanceExplanation: "Report suspected recruiter impersonation directly to the organization's corporate trust and safety team.",
       verifiableClaims: ["Recruiter Legitimacy Confirmation"],
       limitations: "Response times vary by enterprise security department.",
+    });
+  }
+
+  // Candidate Careers Link (if provided by user but unverified against approved corporate domains)
+  if (companyIdentity.candidateCareersUrl && !companyIdentity.isUserProvidedCareersUrlVerified) {
+    routes.push({
+      routeType: "user_provided_candidate",
+      title: "User-Provided Careers Link (Unverified)",
+      url: companyIdentity.candidateCareersUrl,
+      isIndependentlyEstablished: false,
+      relevanceExplanation: `Candidate link provided by user (${companyIdentity.candidateCareersUrl}) has not been established as an official corporate portal. AheadGuard cannot confirm that this link is controlled by ${companyIdentity.claimedOrganization || "the employer"}.`,
+      verifiableClaims: ["Candidate Portal Reference"],
+      limitations: "Unverified user-submitted destination. Do not submit sensitive identity documents or passwords without independent confirmation.",
     });
   }
 

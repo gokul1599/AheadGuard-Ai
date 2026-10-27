@@ -119,6 +119,8 @@ export interface CompanyIdentityVerification {
   officialDomains: string[];
   officialCareersUrl?: string;
   officialContactUrl?: string;
+  candidateCareersUrl?: string;
+  isUserProvidedCareersUrlVerified?: boolean;
   verifiedAt: string;
   evidenceSources: ClaimSourceReference[];
 }
@@ -172,7 +174,7 @@ export interface SensitiveDataRequestItem {
 }
 
 export interface IndependentVerificationRoute {
-  routeType: "official_careers_page" | "corporate_contact_page" | "official_homepage" | "support_portal" | "verified_job_board";
+  routeType: "official_careers_page" | "corporate_contact_page" | "official_homepage" | "support_portal" | "verified_job_board" | "user_provided_candidate";
   title: string;
   url?: string;
   isIndependentlyEstablished: boolean;

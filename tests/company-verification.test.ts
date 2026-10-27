@@ -3,6 +3,7 @@ import {
   verifyCompanyIdentity,
   verifyJobListing,
   isRecruitmentPlatform,
+  matchesRoleText,
 } from "../lib/company-verification";
 
 describe("Company Identity & Job Verification Engine", () => {
@@ -78,25 +79,95 @@ describe("Company Identity & Job Verification Engine", () => {
       expect(result.status).toBe("Unverified identity");
       expect(result.isOfficialCorporateDomain).toBe(false);
     });
+
+    it("verifies user-provided careers URL only if hostname matches approved corporate domains", () => {
+      const verifiedResult = verifyCompanyIdentity({
+        claimedOrg: "Google",
+        userProvidedCareersUrl: "https://careers.google.com/jobs/applications",
+      });
+
+      expect(verifiedResult.isUserProvidedCareersUrlVerified).toBe(true);
+      expect(verifiedResult.candidateCareersUrl).toBe("https://careers.google.com/jobs/applications");
+      expect(verifiedResult.officialCareersUrl).toBe("https://careers.google.com/jobs/applications");
+
+      const unverifiedResult = verifyCompanyIdentity({
+        claimedOrg: "Google",
+        userProvidedCareersUrl: "https://fake-google-jobs.xyz/portal",
+      });
+
+      expect(unverifiedResult.isUserProvidedCareersUrlVerified).toBe(false);
+      expect(unverifiedResult.candidateCareersUrl).toBe("https://fake-google-jobs.xyz/portal");
+      // Must NOT be set to the fake user-provided careers URL! Fallback to registry or undefined
+      expect(unverifiedResult.officialCareersUrl).toBe("https://careers.google.com/");
+    });
+  });
+
+  describe("matchesRoleText", () => {
+    it("rejects generic recruitment terms from falsely matching generic site headers", () => {
+      expect(matchesRoleText("Intern", "Google Careers - Search Jobs & Internships")).toBe(false);
+      expect(matchesRoleText("Job", "Google Jobs - Career Opportunities")).toBe(false);
+      expect(matchesRoleText("Career Opening", "Careers Portal | Openings")).toBe(false);
+    });
+
+    it("requires whole word boundary matches and avoids substring collisions", () => {
+      expect(matchesRoleText("Data Lead", "Database leaderboards and profiles")).toBe(false);
+      expect(matchesRoleText("React Developer", "Proactive developer tools")).toBe(false);
+    });
+
+    it("matches specific substantive roles on authentic title text", () => {
+      expect(matchesRoleText("Software Engineer", "Google Careers - Senior Software Engineer, Search")).toBe(true);
+      expect(matchesRoleText("Cloud Security Architect", "Cloud Security Architect - Enterprise Systems")).toBe(true);
+    });
   });
 
   describe("verifyJobListing", () => {
-    it("reports Listing Matched when hosted on authentic recruitment platform or official domain", () => {
+    it("does not treat an authentic corporate domain as proof of a specific vacancy without evidence", () => {
       const companyIdentity = verifyCompanyIdentity({
         claimedOrg: "Google",
         destinationUrl: "https://careers.google.com/jobs/results/123",
       });
 
       const result = verifyJobListing({
-        claimedRole: "Software Engineer",
+        claimedRole: "Staff Site Reliability Engineer",
         claimedEmployer: "Google",
         jobListingUrl: "https://careers.google.com/jobs/results/123",
         companyIdentity,
         feeWarningPresent: false,
       });
 
-      expect(result.status).toBe("Listing matched");
-      expect(result.explanation).toContain("careers.google.com");
+      expect(result.status).toBe("Listing not found — unverified");
+      expect(result.explanation).toContain("Employer domain recognized");
+      expect(result.explanation).toContain("specific vacancy not independently verified");
+    });
+
+    it("reports Listing Matched when authentic platform is corroborated by direct evidence or page title", () => {
+      const companyIdentity = verifyCompanyIdentity({
+        claimedOrg: "Google",
+        destinationUrl: "https://careers.google.com/jobs/results/123",
+      });
+
+      const resultWithDirectEvidence = verifyJobListing({
+        claimedRole: "Software Engineer",
+        claimedEmployer: "Google",
+        jobListingUrl: "https://careers.google.com/jobs/results/123",
+        companyIdentity,
+        feeWarningPresent: false,
+        directEvidence: { roleMatched: true, vacancyConfirmed: true },
+      });
+
+      expect(resultWithDirectEvidence.status).toBe("Listing matched");
+      expect(resultWithDirectEvidence.explanation).toContain("Software Engineer");
+
+      const resultWithPageTitle = verifyJobListing({
+        claimedRole: "Software Engineer",
+        claimedEmployer: "Google",
+        jobListingUrl: "https://careers.google.com/jobs/results/123",
+        companyIdentity,
+        feeWarningPresent: false,
+        observedPageTitle: "Google Careers — Senior Software Engineer, Search Core",
+      });
+
+      expect(resultWithPageTitle.status).toBe("Listing matched");
     });
 
     it("reports Listing Contradicted when mandatory recruitment fees are requested", () => {

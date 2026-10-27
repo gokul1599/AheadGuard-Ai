@@ -253,6 +253,8 @@ export async function POST(request: Request) {
         jobListingUrl: validation.normalizedUrl,
         companyIdentity,
         feeWarningPresent: Boolean(messageData.recruitmentFeeWarning?.detected),
+        observedPageTitle: baseReport.observedFacts?.pageTitle,
+        observedPageSnippet: baseReport.observedFacts?.visiblePurpose,
       });
 
       return enrichReportWithScamIntelligence({
