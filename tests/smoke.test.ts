@@ -89,6 +89,11 @@ describe("AheadGuard Production Deployment Smoke Test (Vercel Live)", () => {
     process.env.RUN_LIVE_PROD_INVESTIGATION === "true" ||
     (process.env.RUN_PROD_SMOKE_TEST === "true" && process.env.RUN_LIVE_SMOKE_TEST === "true");
 
+  /**
+   * Note: This contract test verifies that the public POST investigation endpoint returns
+   * a well-formed report and safely degrades to ephemeral mode when the database is unconfigured.
+   * To strictly certify real write/read database persistence, use `npm run test:smoke:persistence`.
+   */
   it.skipIf(!isPostEnabled)(
     "Verifies live public text analysis contract returns valid investigation report (authorized opt-in only)",
     async () => {
@@ -122,12 +127,25 @@ describe("AheadGuard Production Deployment Smoke Test (Vercel Live)", () => {
   );
 });
 
+/**
+ * AheadGuard Strict Production Database Readiness Gate
+ *
+ * NOTE ON VERIFICATION SCOPE:
+ * This strict smoke test verifies that the production database endpoint is reachable,
+ * authenticated, and returning a valid health contract (status: "connected", ok: true).
+ * It verifies connectivity and health contract readiness; it does NOT perform write/read
+ * record persistence.
+ *
+ * To certify full end-to-end database persistence (write, unauthenticated 401 gate,
+ * and authenticated read), execute the dedicated opt-in persistence verification probe:
+ *   npm run test:smoke:persistence -- --confirm-live-persistence --prod
+ */
 describe("AheadGuard Strict Production Database Readiness Gate", () => {
   const isDbCheckEnabled = process.env.RUN_DB_SMOKE_TEST === "true";
   const baseUrl = (process.env.PROD_URL || "https://aheadguard-ai.vercel.app").replace(/\/$/, "");
 
   it.skipIf(!isDbCheckEnabled)(
-    "Requires active database connectivity and verifies strict persistence readiness on production",
+    "Requires active database connectivity and verifies strict database readiness on production",
     async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10_000);

@@ -12,6 +12,7 @@
     "test:smoke:live": "node scripts/run-smoke.mjs --live",
     "test:smoke:prod": "node scripts/run-smoke.mjs --prod",
     "test:smoke:db": "node scripts/run-smoke.mjs --db",
+    "test:smoke:persistence": "node scripts/verify-persistence.mjs",
     "build:extension": "node build-extension.mjs",
     "build:all": "npm run build && npm run build:extension",
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs"

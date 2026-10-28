@@ -247,7 +247,22 @@ AheadGuard uses an idempotent schema migration runner to provision the `investig
   - **Prerequisite 3 — Target Branch Confirmation:** Verify that the target database endpoint strictly corresponds to the primary production branch (`main`), not a preview branch or local development database.
   - **Prerequisite 4 — Recovery Plan:** Create an immediate Neon branch snapshot prior to running the migration. Note that point-in-time recovery (PITR) rewinds database state; any investigations logged between the snapshot time and a potential restore would be omitted.
   - **Execution:** Run `node scripts/migrate.mjs` via an ephemeral secure PowerShell session where credentials are provided interactively via `Read-Host -AsSecureString` and never written to disk or logs.
-  - **Post-Verification:** Verify schema integrity and execute live smoke tests (`npm run test:smoke`) against the deployed production API.
+  - **Post-Verification Phase 1 — Database Readiness Gate:**
+    Run the strict readiness smoke gate to verify that the deployed edge environment reports active database connectivity:
+    ```powershell
+    npm run test:smoke:db
+    ```
+    *(Verifies `GET /api/investigate` returns `{ db: { status: "connected", ok: true } }` without secret leakage. Note: this validates connectivity and schema contract readiness, not full write/read persistence).*
+  - **Post-Verification Phase 2 — Production Persistence Certification Gate:**
+    Execute the dedicated, opt-in persistence verification probe to certify true end-to-end database write and authorized read:
+    ```powershell
+    $env:RUN_LIVE_PERSISTENCE_TEST = "true"
+    $env:AHEADGUARD_ADMIN_KEY = "your_production_admin_secret_key"
+    npm run test:smoke:persistence -- --confirm-live-persistence --prod
+    ```
+    *(Submits a harmless text-only probe containing a unique audit marker and NO URLs to avoid TinyFish provider charges. Asserts that the response confirms `report.investigationId`, `report.persisted === true`, and `report.storageMode === "persisted"`. Verifies that an unauthenticated GET is rejected with HTTP 401 Unauthorized, and confirms that an authenticated GET with `Authorization: Bearer <key>` retrieves the exact record).*
+  - **Persistence Release Gate Certification Rule:**
+    Production persistence is officially certified **only** after Phase 2 succeeds with verified database write and authenticated read confirmation. Verification records contain a distinct marker prefix (`aheadguard-persistence-probe-...`) and remain safely recorded in Neon PostgreSQL; AheadGuard deliberately does not expose an unauthenticated deletion endpoint to safeguard audit ledger immutability.
 
 > **Security Analysis of PowerShell .NET Memory Boundary:**
 > `Read-Host -AsSecureString` prevents terminal echo and excludes sensitive input from `PSReadLine` command history (`ConsoleHistory.txt`). `Marshal.ZeroFreeBSTR` immediately zeroes unmanaged BSTR memory. However, passing the credential to Node.js requires conversion to a .NET string (`PtrToStringBSTR`), which allocates an immutable managed `System.String` on the CLR heap that cannot be explicitly zeroized from script execution and persists until garbage collection. In the `finally` block, `Remove-Item env:DATABASE_URL` clears the process environment variable and `$plainUrl = $null` unroots the managed string reference. For zero-residual compliance, execute migrations in an ephemeral PowerShell sub-process (`powershell -NoProfile -Command ...`).
@@ -282,7 +297,7 @@ AheadGuard implements an in-memory sliding window rate limiter (20 req/min, burs
 AheadGuard AI includes a comprehensive suite of automated tests verifying CORS allowlisting, rate limiting, safety policies, SSE streaming, and 26 real-world security scenarios:
 
 ```bash
-# Run unit & integration test suite (Vitest - 307+ automated tests)
+# Run unit & integration test suite (Vitest - 341+ automated tests)
 npm test
 
 # Run default smoke test suite (opt-in tests skipped)
@@ -294,8 +309,11 @@ npm run test:smoke:live
 # Run live production deployment smoke test (tests endpoint reachability & safe fallback contract)
 npm run test:smoke:prod
 
-# Run strict production database readiness smoke test (fails unless database is active & connected)
+# Run strict production database readiness smoke test (verifies active connectivity via GET /api/investigate)
 npm run test:smoke:db
+
+# Run dedicated production persistence certification probe (opt-in end-to-end write & authorized read verification)
+npm run test:smoke:persistence -- --confirm-live-persistence --prod
 
 # Run ESLint
 npm run lint
