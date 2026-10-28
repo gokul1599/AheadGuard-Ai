@@ -91,15 +91,86 @@ export function getDb(): NeonQueryFunction<false, false> {
   return cachedSql;
 }
 
+export type DatabaseConnectionStatus = "connected" | "unconfigured" | "unavailable";
+
+export interface DatabaseConnectionResult {
+  ok: boolean;
+  status: DatabaseConnectionStatus;
+  error?: string;
+}
+
+/**
+ * Validates the structure and contract consistency of an API health check response.
+ *
+ * Requirements:
+ * - data must be an object with a 'db' property
+ * - db.ok must be boolean
+ * - db.status must be one of: 'connected', 'unconfigured', 'unavailable'
+ * - Consistency: if status === 'connected', ok must be true
+ * - Consistency: if status !== 'connected', ok must be false
+ * - In strict persistence mode: status must be 'connected' and ok must be true
+ */
+export function validateDatabaseHealthContract(
+  data: unknown,
+  options?: { strictConnected?: boolean }
+): { valid: boolean; error?: string; status?: DatabaseConnectionStatus; ok?: boolean } {
+  if (!data || typeof data !== "object") {
+    return { valid: false, error: "Response body is not a valid JSON object." };
+  }
+
+  const payload = data as Record<string, unknown>;
+  if (!("db" in payload) || !payload.db || typeof payload.db !== "object") {
+    return { valid: false, error: "Missing or invalid 'db' object in response." };
+  }
+
+  const db = payload.db as Record<string, unknown>;
+  if (typeof db.ok !== "boolean") {
+    return { valid: false, error: "Property 'db.ok' must be a boolean." };
+  }
+
+  const validStatuses: DatabaseConnectionStatus[] = ["connected", "unconfigured", "unavailable"];
+  if (typeof db.status !== "string" || !validStatuses.includes(db.status as DatabaseConnectionStatus)) {
+    return {
+      valid: false,
+      error: `Property 'db.status' must be one of: ${validStatuses.join(", ")}; received "${String(db.status)}"`,
+    };
+  }
+
+  const status = db.status as DatabaseConnectionStatus;
+
+  // Strict internal consistency check
+  if (status === "connected" && !db.ok) {
+    return { valid: false, error: "Inconsistent state: status is 'connected' but 'ok' is false." };
+  }
+  if (status !== "connected" && db.ok) {
+    return { valid: false, error: `Inconsistent state: status is '${status}' but 'ok' is true.` };
+  }
+
+  // If error string is present, ensure it does not leak credentials or connection strings
+  if (typeof db.error === "string") {
+    const lower = db.error.toLowerCase();
+    if (lower.includes("password") || lower.includes("neon.tech") || lower.includes("postgres://") || lower.includes("postgresql://")) {
+      return { valid: false, error: "Security violation: db.error contains leaked credential or host details." };
+    }
+  }
+
+  if (options?.strictConnected && (status !== "connected" || !db.ok)) {
+    return {
+      valid: false,
+      status,
+      ok: db.ok,
+      error: `Strict database persistence check failed: expected status 'connected' with ok:true, but got status '${status}' (ok: ${db.ok}).`,
+    };
+  }
+
+  return { valid: true, status, ok: db.ok };
+}
+
 /**
  * Tests connectivity to the configured Neon database with a minimal, safe query (SELECT 1).
  * Never leaks database credentials, host details, SQL version strings, or internal error traces.
  */
-export async function testDatabaseConnection(): Promise<{
-  ok: boolean;
-  status: "connected" | "unconfigured" | "unavailable";
-  error?: string;
-}> {
+export async function testDatabaseConnection(): Promise<DatabaseConnectionResult> {
   if (!isDatabaseConfigured()) {
     return {
       ok: false,

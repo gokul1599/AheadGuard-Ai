@@ -6,7 +6,9 @@
  * Usage:
  *   node scripts/run-smoke.mjs          # Default: runs smoke suite with opt-in tests skipped
  *   node scripts/run-smoke.mjs --live   # Sets RUN_LIVE_SMOKE_TEST=true (TinyFish live probe)
- *   node scripts/run-smoke.mjs --prod   # Sets RUN_PROD_SMOKE_TEST=true (Vercel live deployment check)
+ *   node scripts/run-smoke.mjs --prod   # Sets RUN_PROD_SMOKE_TEST=true (Vercel deployment contract check)
+ *   node scripts/run-smoke.mjs --db     # Sets RUN_DB_SMOKE_TEST=true (Strict production DB persistence check)
+ *   node scripts/run-smoke.mjs --post   # Sets RUN_LIVE_PROD_INVESTIGATION=true (Live billable investigation probe)
  */
 
 import { spawn } from "node:child_process";
@@ -15,6 +17,8 @@ import { resolve } from "node:path";
 const args = process.argv.slice(2);
 const isLive = args.includes("--live");
 const isProd = args.includes("--prod");
+const isDb = args.includes("--db");
+const isPost = args.includes("--post");
 
 const env = {
   ...process.env,
@@ -25,6 +29,15 @@ if (isLive) {
 }
 
 if (isProd) {
+  env.RUN_PROD_SMOKE_TEST = "true";
+}
+
+if (isDb) {
+  env.RUN_DB_SMOKE_TEST = "true";
+}
+
+if (isPost) {
+  env.RUN_LIVE_PROD_INVESTIGATION = "true";
   env.RUN_PROD_SMOKE_TEST = "true";
 }
 

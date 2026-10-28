@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { executeTinyFishInvestigation } from "../lib/tinyfish";
 import { assessInvestigation } from "../lib/policy";
+import { validateDatabaseHealthContract } from "../lib/db";
 
 describe("AheadGuard Live Provider Smoke Test (TinyFish)", () => {
   const isEnabled = process.env.RUN_LIVE_SMOKE_TEST === "true";
@@ -53,10 +54,10 @@ describe("AheadGuard Production Deployment Smoke Test (Vercel Live)", () => {
           headers: { Accept: "application/json" },
         });
         expect(res.status).toBe(200);
-        const data = (await res.json()) as { db?: { ok: boolean; status: string } };
-        expect(data).toHaveProperty("db");
-        expect(typeof data.db?.ok).toBe("boolean");
-        expect(["unconfigured", "connected", "error"]).toContain(data.db?.status);
+        const data: unknown = await res.json();
+        const validation = validateDatabaseHealthContract(data);
+        expect(validation.valid).toBe(true);
+        expect(["unconfigured", "connected", "unavailable"]).toContain(validation.status);
       } finally {
         clearTimeout(timeout);
       }
@@ -84,8 +85,12 @@ describe("AheadGuard Production Deployment Smoke Test (Vercel Live)", () => {
     15_000
   );
 
-  it.skipIf(!isEnabled)(
-    "Verifies live public text analysis contract returns valid investigation report",
+  const isPostEnabled =
+    process.env.RUN_LIVE_PROD_INVESTIGATION === "true" ||
+    (process.env.RUN_PROD_SMOKE_TEST === "true" && process.env.RUN_LIVE_SMOKE_TEST === "true");
+
+  it.skipIf(!isPostEnabled)(
+    "Verifies live public text analysis contract returns valid investigation report (authorized opt-in only)",
     async () => {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 60_000);
@@ -114,5 +119,36 @@ describe("AheadGuard Production Deployment Smoke Test (Vercel Live)", () => {
       }
     },
     75_000
+  );
+});
+
+describe("AheadGuard Strict Production Database Readiness Gate", () => {
+  const isDbCheckEnabled = process.env.RUN_DB_SMOKE_TEST === "true";
+  const baseUrl = (process.env.PROD_URL || "https://aheadguard-ai.vercel.app").replace(/\/$/, "");
+
+  it.skipIf(!isDbCheckEnabled)(
+    "Requires active database connectivity and verifies strict persistence readiness on production",
+    async () => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10_000);
+      try {
+        const res = await fetch(`${baseUrl}/api/investigate`, {
+          signal: controller.signal,
+          headers: { Accept: "application/json" },
+        });
+        expect(res.status).toBe(200);
+        const data: unknown = await res.json();
+        const validation = validateDatabaseHealthContract(data, { strictConnected: true });
+        if (!validation.valid) {
+          throw new Error(validation.error);
+        }
+        expect(validation.valid).toBe(true);
+        expect(validation.status).toBe("connected");
+        expect(validation.ok).toBe(true);
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+    15_000
   );
 });

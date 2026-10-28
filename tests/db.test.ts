@@ -11,6 +11,7 @@ import {
   initDatabaseSchema,
   validateTableStructure,
   validateDatabaseSchema,
+  validateDatabaseHealthContract,
   SessionQueryClient,
   createSessionSql,
 } from "../lib/db";
@@ -871,6 +872,125 @@ describe("Neon Serverless Postgres Integration & Persistence", () => {
 
       expect(recorded[0]).toBe("SELECT 1 + 2 as total;");
       expect(res).toEqual([{ result: 42 }]);
+    });
+  });
+
+  describe("Database Health Contract & Persistence Readiness Validation", () => {
+    it("1. accepts consistent 'connected' status with ok: true in both generic and strict mode", () => {
+      const response = { db: { ok: true, status: "connected" } };
+      const generic = validateDatabaseHealthContract(response);
+      expect(generic.valid).toBe(true);
+      expect(generic.status).toBe("connected");
+      expect(generic.ok).toBe(true);
+
+      const strict = validateDatabaseHealthContract(response, { strictConnected: true });
+      expect(strict.valid).toBe(true);
+      expect(strict.status).toBe("connected");
+      expect(strict.ok).toBe(true);
+    });
+
+    it("2. accepts 'unconfigured' with ok: false in generic mode as safe fallback", () => {
+      const response = {
+        db: {
+          ok: false,
+          status: "unconfigured",
+          error: "DATABASE_URL environment variable is not configured.",
+        },
+      };
+      const generic = validateDatabaseHealthContract(response);
+      expect(generic.valid).toBe(true);
+      expect(generic.status).toBe("unconfigured");
+      expect(generic.ok).toBe(false);
+    });
+
+    it("3. rejects 'unconfigured' in strict persistence mode with clear explanation", () => {
+      const response = {
+        db: {
+          ok: false,
+          status: "unconfigured",
+          error: "DATABASE_URL environment variable is not configured.",
+        },
+      };
+      const strict = validateDatabaseHealthContract(response, { strictConnected: true });
+      expect(strict.valid).toBe(false);
+      expect(strict.error).toContain("Strict database persistence check failed");
+      expect(strict.error).toContain("unconfigured");
+    });
+
+    it("4. accepts 'unavailable' in generic mode structure check but rejects in strict mode", () => {
+      const response = {
+        db: {
+          ok: false,
+          status: "unavailable",
+          error: "Unable to reach database service.",
+        },
+      };
+      const generic = validateDatabaseHealthContract(response);
+      expect(generic.valid).toBe(true);
+      expect(generic.status).toBe("unavailable");
+      expect(generic.ok).toBe(false);
+
+      const strict = validateDatabaseHealthContract(response, { strictConnected: true });
+      expect(strict.valid).toBe(false);
+      expect(strict.error).toContain("Strict database persistence check failed");
+      expect(strict.error).toContain("unavailable");
+    });
+
+    it("5. rejects unexpected status values (such as 'error', 'unknown', 'degraded')", () => {
+      const invalidStatuses = ["error", "unknown", "degraded", "healthy", "down"];
+      for (const badStatus of invalidStatuses) {
+        const res = validateDatabaseHealthContract({ db: { ok: false, status: badStatus } });
+        expect(res.valid).toBe(false);
+        expect(res.error).toContain("Property 'db.status' must be one of");
+      }
+    });
+
+    it("6. rejects inconsistent state: 'connected' with ok: false", () => {
+      const res = validateDatabaseHealthContract({ db: { ok: false, status: "connected" } });
+      expect(res.valid).toBe(false);
+      expect(res.error).toContain("Inconsistent state: status is 'connected' but 'ok' is false");
+    });
+
+    it("7. rejects inconsistent state: 'unconfigured' or 'unavailable' with ok: true", () => {
+      const res1 = validateDatabaseHealthContract({ db: { ok: true, status: "unconfigured" } });
+      expect(res1.valid).toBe(false);
+      expect(res1.error).toContain("Inconsistent state: status is 'unconfigured' but 'ok' is true");
+
+      const res2 = validateDatabaseHealthContract({ db: { ok: true, status: "unavailable" } });
+      expect(res2.valid).toBe(false);
+      expect(res2.error).toContain("Inconsistent state: status is 'unavailable' but 'ok' is true");
+    });
+
+    it("8. rejects non-object responses, null, and missing db property", () => {
+      expect(validateDatabaseHealthContract(null).valid).toBe(false);
+      expect(validateDatabaseHealthContract("hello").valid).toBe(false);
+      expect(validateDatabaseHealthContract({}).valid).toBe(false);
+      expect(validateDatabaseHealthContract({ db: null }).valid).toBe(false);
+      expect(validateDatabaseHealthContract({ db: { ok: "not-a-bool", status: "connected" } }).valid).toBe(false);
+    });
+
+    it("9. security check: rejects error responses that leak sensitive credentials or hostnames", () => {
+      const leakyResponse1 = {
+        db: {
+          ok: false,
+          status: "unavailable",
+          error: "Connection failed for user root with password=SECRET_PASS_123",
+        },
+      };
+      const res1 = validateDatabaseHealthContract(leakyResponse1);
+      expect(res1.valid).toBe(false);
+      expect(res1.error).toContain("Security violation");
+
+      const leakyResponse2 = {
+        db: {
+          ok: false,
+          status: "unavailable",
+          error: "Connection timeout connecting to postgresql://user:pass@ep-secret.us-east-2.aws.neon.tech/neondb",
+        },
+      };
+      const res2 = validateDatabaseHealthContract(leakyResponse2);
+      expect(res2.valid).toBe(false);
+      expect(res2.error).toContain("Security violation");
     });
   });
 });

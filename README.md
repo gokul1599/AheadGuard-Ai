@@ -291,8 +291,11 @@ npm run test:smoke
 # Run live provider smoke test (requires TINYFISH_API_KEY)
 npm run test:smoke:live
 
-# Run live production deployment smoke test (tests deployed Vercel endpoint)
+# Run live production deployment smoke test (tests endpoint reachability & safe fallback contract)
 npm run test:smoke:prod
+
+# Run strict production database readiness smoke test (fails unless database is active & connected)
+npm run test:smoke:db
 
 # Run ESLint
 npm run lint
