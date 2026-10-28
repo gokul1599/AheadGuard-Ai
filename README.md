@@ -33,10 +33,9 @@ AheadGuard AI is a proactive digital safety guardian that investigates unknown d
    - Strict separation between **Observed Facts** (direct sandbox observations) and **Model Interpretations** (clearly labeled AI inferences with confidence ratings).
    - Detailed evidence items with verifiable provenance badges (`TINYFISH_DOM`, `HTTP_ANALYSIS`, `NETWORK_REDIRECT`, etc.).
 
-5. **Local Evidence Ledger**:
-   - Client-side history stored exclusively in user-controlled browser storage.
-   - Never transmitted to external analytics or centralized databases.
-   - One-click pause/resume recording toggle and instant ledger wipe.
+5. **Two-Tier Privacy & Evidence Architecture**:
+   - **Browser-Local Evidence Ledger**: Client-side browsing history and session evidence stored locally in the user's browser via `localStorage` (`aheadguard_evidence_ledger_v1`). Users maintain autonomous privacy control with instant ledger wipe, pause/resume recording toggles, and zero tracking scripts. This client-side history is never automatically transmitted to third parties or centralized telemetry.
+   - **Centralized Server-Side Persistence (Neon PostgreSQL)**: When the server administrator configures `DATABASE_URL`, server-side investigations executed via `/api/investigate` are safely recorded in Neon PostgreSQL (`public.investigations`) for centralized organizational security review. Centralized history is strictly protected behind `AHEADGUARD_ADMIN_KEY` using constant-time verification. When `DATABASE_URL` is omitted, the backend runs in ephemeral mode where investigations exist solely in memory for the duration of the request. Predefined demo scenarios and offline checks are never persisted.
 
 6. **Chrome Extension (Manifest V3)**:
    - Configured out-of-the-box for production (`https://aheadguard-ai.vercel.app`).
@@ -280,11 +279,20 @@ AheadGuard implements an in-memory sliding window rate limiter (20 req/min, burs
 
 ## Running Verification Tests
 
-AheadGuard AI includes a suite of automated tests verifying CORS allowlisting, rate limiting, safety policies, SSE streaming, and 26 real-world security scenarios:
+AheadGuard AI includes a comprehensive suite of automated tests verifying CORS allowlisting, rate limiting, safety policies, SSE streaming, and 26 real-world security scenarios:
 
 ```bash
-# Run unit & integration test suite (Vitest)
+# Run unit & integration test suite (Vitest - 307+ automated tests)
 npm test
+
+# Run default smoke test suite (opt-in tests skipped)
+npm run test:smoke
+
+# Run live provider smoke test (requires TINYFISH_API_KEY)
+npm run test:smoke:live
+
+# Run live production deployment smoke test (tests deployed Vercel endpoint)
+npm run test:smoke:prod
 
 # Run ESLint
 npm run lint
@@ -294,7 +302,21 @@ npx tsc --noEmit
 
 # Run Next.js production build
 npm run build
+
+# Run Chrome Extension build
+npm run build:extension
 ```
+
+### Continuous Integration (CI/CD)
+
+The repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) configured for Node.js 24 on `ubuntu-latest`. It automatically executes on every push and pull request to `main`:
+1. Dependency integrity check (`npm ci`)
+2. Code style and static analysis (`npm run lint`)
+3. Strict TypeScript compilation (`npx tsc --noEmit`)
+4. Complete unit and integration test suite (`npm test`)
+5. Clean-environment smoke tests (`npm run test:smoke`)
+6. Chrome Extension artifact build (`npm run build:extension`)
+7. Next.js production build (`npm run build`)
 
 ---
 
