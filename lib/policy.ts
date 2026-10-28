@@ -26,6 +26,8 @@ const HIGH_RISK_SIGNALS = [
   "active exploit",
   "fake sign-in portal",
   "cloned login page",
+  "executable download",
+  "drive-by download",
 ];
 
 // Indicators of suspicious activity
@@ -53,7 +55,7 @@ const SUSPICIOUS_SIGNALS = [
 ];
 
 // Adversarial prompt injection markers in web content
-const PROMPT_INJECTION_PATTERNS = [
+export const PROMPT_INJECTION_PATTERNS = [
   /ignore\s+(all\s+)?previous\s+instructions/i,
   /aheadguard\b[^\n\r]{0,40}\b(?:please\s+)?(?:declare|mark|classify|rate|treat|report|say)\b[^\n\r]{0,40}\b(?:as\s+)?(?:safe|verified|clean|trusted|low\s+observed\s+risk)\b/i,
   /aheadguard\b[^\n\r]{0,40}\b(?:bypass|override|disable|skip|whitelist|allow\s+(?:this|all|domain|site|url))\b/i,
@@ -62,6 +64,16 @@ const PROMPT_INJECTION_PATTERNS = [
   /system\s+(prompt|instruction)\s*:/i,
   /you\s+are\s+now\s+in\s+developer\s+mode/i,
   /override\s+security\s+verdict/i,
+  /\b(?:dan\s+mode|jailbreak|developer\s+mode|unrestricted\s+mode)\b/i,
+  /\b(?:you\s+are\s+now|operating\s+as|act\s+as)\s+(?:in\s+)?(?:bypass|unrestricted|god|admin|safety\s+auditor)\s+mode\b/i,
+  /\b(?:ai\s+auditor|security\s+evaluator|system\s+admin)\s*:\s*(?:mark|rate|declare|report)\b/i,
+  /\b(?:override|bypass|disable|suspend)\s+(?:all\s+)?(?:security|safety|filtering|policy|verdict|rules|guidelines)\b/i,
+  /(?:<\/textarea>|<\/script>|<!--\s*END\s+(?:INSTRUCTIONS|PROMPT|SYSTEM)\s*-->)/i,
+  /\b(?:Human|User|Assistant|System)\s*:\s*(?:ignore|please\s+declare|mark\s+this|override)/i,
+  /\b(?:forget|reset|clear)\s+(?:all\s+)?(?:previous\s+)?(?:instructions|context|rules|guidelines)\b/i,
+  /\bdo\s+not\s+(?:flag|warn|report|alert|display\s+warnings?)\b/i,
+  /\bbase64\s*:\s*[A-Za-z0-9+/=]{16,}/i,
+  /\b(?:zero-width|rot13|hex-encoded)\s+override\b/i,
 ];
 
 export interface BrandRegistryEntry {
@@ -92,6 +104,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
       "google.com.au",
       "google.co.in",
       "google.co.jp",
+      "about.google",
     ],
     affiliatedAuthDomains: ["accounts.google.com"],
     officialCareersUrl: "https://careers.google.com/",
@@ -704,7 +717,52 @@ export interface BrandAffiliationResult {
   isReservedExample?: boolean;
   isHostedPayment?: boolean;
   isUserHostedPlatform?: boolean;
+  isThirdPartyPlatform?: boolean;
+  platformName?: string;
   reason?: string;
+}
+
+export const RECOGNIZED_RECRUITMENT_PLATFORMS: Record<
+  string,
+  { name: string; rootDomain: string; isHostingJobBoard: boolean }
+> = {
+  "greenhouse.io": { name: "Greenhouse", rootDomain: "greenhouse.io", isHostingJobBoard: true },
+  "lever.co": { name: "Lever", rootDomain: "lever.co", isHostingJobBoard: true },
+  "myworkdayjobs.com": { name: "Workday Jobs", rootDomain: "myworkdayjobs.com", isHostingJobBoard: true },
+  "smartrecruiters.com": { name: "SmartRecruiters", rootDomain: "smartrecruiters.com", isHostingJobBoard: true },
+  "ashbyhq.com": { name: "Ashby", rootDomain: "ashbyhq.com", isHostingJobBoard: true },
+  "workable.com": { name: "Workable", rootDomain: "workable.com", isHostingJobBoard: true },
+  "bamboohr.com": { name: "BambooHR", rootDomain: "bamboohr.com", isHostingJobBoard: true },
+  "linkedin.com": { name: "LinkedIn", rootDomain: "linkedin.com", isHostingJobBoard: true },
+  "indeed.com": { name: "Indeed", rootDomain: "indeed.com", isHostingJobBoard: true },
+  "wellfound.com": { name: "Wellfound (AngelList)", rootDomain: "wellfound.com", isHostingJobBoard: true },
+  "internshala.com": { name: "Internshala", rootDomain: "internshala.com", isHostingJobBoard: true },
+  "naukri.com": { name: "Naukri", rootDomain: "naukri.com", isHostingJobBoard: true },
+};
+
+/**
+ * Checks if a given URL or hostname belongs to a recognized recruitment platform or job board.
+ */
+export function isRecruitmentPlatform(urlOrHostname: string): { isPlatform: boolean; platformName?: string } {
+  if (!urlOrHostname) return { isPlatform: false };
+  let h = urlOrHostname.toLowerCase().trim();
+  try {
+    if (h.includes("://")) {
+      h = new URL(h).hostname.toLowerCase();
+    } else if (h.includes("/")) {
+      h = h.split("/")[0].toLowerCase();
+    }
+  } catch {
+    // Keep original string if URL parse fails
+  }
+
+  for (const [domain, meta] of Object.entries(RECOGNIZED_RECRUITMENT_PLATFORMS)) {
+    if (isDomainOrSubdomain(h, domain) || isSameRegistrableDomain(h, domain)) {
+      return { isPlatform: true, platformName: meta.name };
+    }
+  }
+
+  return { isPlatform: false };
 }
 
 /**
@@ -821,6 +879,48 @@ export function evaluateBrandAffiliation(
       hasMismatch: false,
       isUserHostedPlatform: true,
       reason: "User-hosted platform domain; content is published by individual users and does not prove page owner identity.",
+    };
+  }
+
+  // 4. Recognized Third-Party Recruitment / ATS Platforms (e.g. Greenhouse, Lever, Workday)
+  // Legitimate organizations routinely host jobs on enterprise ATS platforms.
+  // This is classified as a third-party platform, NOT a deceptive domain mismatch.
+  const platformCheck = isRecruitmentPlatform(hostname);
+  if (platformCheck.isPlatform) {
+    let matchedEntry: BrandRegistryEntry | undefined;
+    if (claimedOrg && claimedOrg.trim()) {
+      const rawOrgLower = claimedOrg.toLowerCase().trim();
+      const canonical = extractCanonicalBrandName(claimedOrg);
+      const canonicalLower = canonical.toLowerCase().trim();
+      for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+        const entryNameLower = entry.canonicalName.toLowerCase();
+        if (
+          entryNameLower === canonicalLower ||
+          entryNameLower === rawOrgLower ||
+          entry.aliases.some(
+            (alias) =>
+              alias === canonicalLower ||
+              alias === rawOrgLower ||
+              matchesBrandAlias(rawOrgLower, alias) ||
+              matchesBrandAlias(canonicalLower, alias)
+          )
+        ) {
+          matchedEntry = entry;
+          break;
+        }
+      }
+    }
+
+    return {
+      isRegisteredBrand: Boolean(matchedEntry),
+      brandEntry: matchedEntry,
+      canonicalBrand: matchedEntry?.canonicalName || claimedOrg || "",
+      isOfficialDomain: false,
+      isAffiliatedDomain: false,
+      hasMismatch: false,
+      isThirdPartyPlatform: true,
+      platformName: platformCheck.platformName,
+      reason: `Destination is hosted on ${platformCheck.platformName}, an established recruitment and job board platform.`,
     };
   }
 
@@ -1110,6 +1210,43 @@ export function isDormantOrSuspendedPage(
 }
 
 /**
+ * Detects whether page content discusses prompt injection, adversarial machine learning,
+ * or AI security vulnerabilities in an educational, research, or documentation context.
+ */
+export function isEducationalOrSecurityArticle(
+  pageTitle?: string,
+  visiblePurpose?: string,
+  rawText?: string
+): boolean {
+  const combined = `${pageTitle || ""} ${visiblePurpose || ""} ${rawText || ""}`.toLowerCase();
+  const researchIndicators = [
+    "security research",
+    "vulnerability advisory",
+    "owasp",
+    "cve-",
+    "mitre",
+    "academic paper",
+    "educational article",
+    "prompt injection vulnerability",
+    "understanding llm",
+    "ai safety guidelines",
+    "study on prompt injection",
+    "discussing jailbreak",
+    "jailbreak analysis",
+    "llm security testing",
+    "llm top 10",
+    "prompt injection attack",
+    "adversarial prompt",
+    "defending against prompt injection",
+    "ai red team",
+    "ai red teaming",
+    "prompt injection mitigation",
+    "security guide",
+  ];
+  return researchIndicators.some((ind) => combined.includes(ind));
+}
+
+/**
  * Detects whether a text describes an ordinary app-store link, mobile/desktop app download link,
  * or informational software download button rather than an active browser prompt or automatic file execution.
  */
@@ -1317,7 +1454,10 @@ export function assessInvestigation(params: {
   tinyFishResult: TinyFishExecutionResult;
 }): InvestigationReport {
   const { submittedUrl, tinyFishResult } = params;
-  const investigationId = `inv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+  const randSuffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+    : Math.random().toString(36).substring(2, 10);
+  const investigationId = `inv_${Date.now()}_${randSuffix}`;
   const timestamp = new Date().toISOString();
 
   const structured = tinyFishResult.structuredResult;
@@ -1402,11 +1542,22 @@ export function assessInvestigation(params: {
   const isNumericIp = /^\d{1,3}(\.\d{1,3}){3}$/.test(submittedHost) || submittedHost.includes(":");
   const isHttp = submittedUrl.protocol === "http:";
 
-  const structuredCred = booleanOrStringFlag(structured?.credential_or_payment_request);
-  const structuredLogin = booleanOrStringFlag(structured?.login_form_observed);
-  const structuredPassword = booleanOrStringFlag(structured?.password_field_observed);
-  const structuredPayment = booleanOrStringFlag(structured?.payment_field_observed);
-  let structuredDownload = booleanOrStringFlag(structured?.download_or_permission_request);
+  const rawRecord = (structured || {}) as Record<string, unknown>;
+  const structuredCred = booleanOrStringFlag(
+    structured?.credential_or_payment_request ?? rawRecord.credential_or_payment_requested
+  );
+  const structuredLogin = booleanOrStringFlag(
+    structured?.login_form_observed ?? rawRecord.forms_observed
+  );
+  const structuredPassword = booleanOrStringFlag(
+    structured?.password_field_observed ?? rawRecord.has_password_field
+  );
+  const structuredPayment = booleanOrStringFlag(
+    structured?.payment_field_observed ?? rawRecord.has_payment_field
+  );
+  let structuredDownload = booleanOrStringFlag(
+    structured?.download_or_permission_request ?? rawRecord.download_or_permission_requested
+  );
   const appStoreLinkOnly = booleanOrStringFlag(structured?.app_store_or_informational_link_only);
 
   const credOrPaymentRequested = structuredCred || structuredPassword || structuredPayment;
@@ -1596,6 +1747,13 @@ export function assessInvestigation(params: {
       };
       evidenceItems.push(mismatchItem);
       warningSigns.push(mismatchItem.label);
+    } else if (brandAffiliation.isThirdPartyPlatform) {
+      evidenceItems.push({
+        label: "Recognized Third-Party Recruitment Platform",
+        detail: `The destination is hosted on ${brandAffiliation.platformName || "a recognized third-party recruitment platform"}. Job vacancies hosted here require company sub-account corroboration.`,
+        kind: "neutral",
+        provenance: "url_structure",
+      });
     } else if (brandAffiliation.isOfficialDomain) {
       evidenceItems.push({
         label: "Matches Configured Brand Registry",
@@ -1678,16 +1836,60 @@ export function assessInvestigation(params: {
   }
 
   // Adversarial prompt injection defense
-  const hasPromptInjection = PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(rawText));
+  const textSourcesToInspect = [
+    rawText,
+    structured?.page_title || "",
+    structured?.visible_purpose || "",
+    ...(structured?.observed_warning_signs || []),
+    ...(structured?.positive_signals || []),
+  ].join(" \n ");
+  const hasPromptInjection = PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(textSourcesToInspect));
+  let isPromptInjectionWarning = false;
+
   if (hasPromptInjection) {
-    const injectionItem: Finding = {
-      label: "Adversarial Instruction Detected in Web Content",
-      detail: "The page contains text patterns attempting to manipulate AI security evaluations. The content was isolated and discounted.",
-      kind: "warning",
-      provenance: "policy_rule",
-    };
-    evidenceItems.push(injectionItem);
-    warningSigns.push(injectionItem.label);
+    const isEducational = isEducationalOrSecurityArticle(
+      observedFacts.pageTitle,
+      observedFacts.visiblePurpose,
+      textSourcesToInspect
+    );
+    const isDirectAgentAttack = /\baheadguard\b[^\n\r]{0,40}\b(?:please\s+)?(?:declare|mark|classify|rate|treat|report|say|bypass|override|disable)\b/i.test(
+      textSourcesToInspect
+    );
+
+    if (
+      isEducational &&
+      !isDirectAgentAttack &&
+      !observedFacts.credentialOrPaymentRequest &&
+      !observedFacts.hasPasswordField &&
+      !observedFacts.downloadOrPermissionRequest
+    ) {
+      // Educational security paper or article quoting injection patterns for research: emit neutral informational observation
+      evidenceItems.push({
+        label: "Security Topic: Prompt Injection Mentioned",
+        detail:
+          "The destination discusses or references AI prompt injection concepts in an educational or research context. No active manipulation directed at AheadGuard was observed.",
+        kind: "neutral",
+        provenance: "browser_observation",
+        evidenceNature: "direct_observation",
+        sourceType: "observed_destination",
+        sourceUrl: finalUrlStr || submittedUrl.toString(),
+        accessible: !structured?.access_blocked,
+      });
+    } else {
+      isPromptInjectionWarning = true;
+      const injectionItem: Finding = {
+        label: "Adversarial Instruction Detected in Web Content",
+        detail:
+          "The page contains text patterns attempting to manipulate AI security evaluations. The content was isolated and discounted.",
+        kind: "warning",
+        provenance: "policy_rule",
+        evidenceNature: "derived_policy_rule",
+        sourceType: "heuristic_rule",
+        rationale: "Matches adversarial bypass or prompt injection patterns in web content.",
+      };
+      evidenceItems.push(injectionItem);
+      warningSigns.push(injectionItem.label);
+    }
   }
 
   // Agent observed warning signs with Negation, Limitation, Donation & App-Store Filtering
@@ -1813,6 +2015,12 @@ export function assessInvestigation(params: {
   }
 
   // 6. Deterministic Policy Outcome Engine
+  const limitations: string[] = [
+    "AheadGuard provides decision support based on observed evidence; it does not replace antivirus or browser security sandboxes.",
+    "Absence of detected warning signs is not a mathematical guarantee of safety.",
+    "Read-only inspection cannot verify backend server storage, database handling, or internal code vulnerabilities.",
+  ];
+
   let riskOutcome: RiskOutcome;
   let threatLikelihood: ThreatLikelihood;
   let consequenceImpact: ConsequenceImpact;
@@ -1852,8 +2060,34 @@ export function assessInvestigation(params: {
       /lookalike|punycode|numeric\s+ip|unencrypted\s+http|domain\s+discrepancy/i.test(w)
     );
 
-  // Policy Rule 1: Investigation Failure or Inconclusive -> MANDATORY UNKNOWN
-  if (!tinyFishResult.success || tinyFishResult.goalFailed) {
+  const hasConfirmedSevereThreat =
+    confirmedHighSignal ||
+    hasUnsafeRedirect ||
+    Boolean(structured?.automatic_download_observed) ||
+    warningSigns.includes("Credential Form on Impersonated Domain") ||
+    (warningSigns.some((w) => w.includes("Lookalike")) && (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField)) ||
+    ((allWarningText.includes("requests otp") || allWarningText.includes("requests 2fa")) && (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField)) ||
+    (isPromptInjectionWarning && (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField)) ||
+    (hasPunycode && (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField));
+
+  // Policy Rule: Confirmed Severe Threats & High-Risk Policy Violations
+  // Precedence Rule: A verified severe threat (e.g. SSRF redirect to cloud metadata/private IP,
+  // credential theft on impersonated domain, or automated drive-by download) must NEVER be suppressed
+  // or downgraded to "Unknown" merely because the external crawler terminated, timed out, or encountered an error.
+  if (hasConfirmedSevereThreat) {
+    riskOutcome = "High risk";
+    threatLikelihood = "High";
+    consequenceImpact = "Severe";
+    outcomeReason = hasUnsafeRedirect
+      ? `Security policy violation: Destination redirected to a restricted internal network address (${finalHost}).`
+      : "Strong evidence points to high-risk deception or malicious credential targeting on this page.";
+    recommendedAction = "DO NOT PROCEED. Close this tab immediately. Do not submit passwords, payment details, or download files.";
+    if (!tinyFishResult.success || tinyFishResult.goalFailed) {
+      limitations.push("Crawler stream terminated with an error, but severe threat indicators were confirmed prior to termination.");
+    }
+  }
+  // Policy Rule 1: Investigation Failure or Inconclusive (when no severe threat is confirmed) -> MANDATORY UNKNOWN
+  else if (!tinyFishResult.success || tinyFishResult.goalFailed) {
     riskOutcome = "Unknown";
     threatLikelihood = "Uncertain";
     outcomeReason = tinyFishResult.errorMessage
@@ -1884,18 +2118,8 @@ export function assessInvestigation(params: {
       "The destination service is currently inactive or suspended. Do not attempt to submit information until normal service is verified.";
     missingEvidence.push("Active operating service could not be verified (site is dormant/suspended).");
   }
-  // Policy Rule 2: Confirmed High Risk Threats or SSRF Redirect Attempt
-  else if (confirmedHighSignal || hasUnsafeRedirect || (hasPromptInjection && observedFacts.credentialOrPaymentRequest)) {
-    riskOutcome = "High risk";
-    threatLikelihood = "High";
-    consequenceImpact = "Severe";
-    outcomeReason = hasUnsafeRedirect
-      ? `Security policy violation: Destination redirected to a restricted internal network address (${finalHost}).`
-      : "Strong evidence points to high-risk deception or malicious credential targeting on this page.";
-    recommendedAction = "DO NOT PROCEED. Close this tab immediately. Do not submit passwords, payment details, or download files.";
-  }
   // Policy Rule 3: Suspicious Signs
-  else if (warningSigns.length > 0 || hasSuspiciousSignal || hasPromptInjection) {
+  else if (warningSigns.length > 0 || hasSuspiciousSignal || isPromptInjectionWarning) {
     riskOutcome = "Suspicious";
     threatLikelihood = "Moderate";
     outcomeReason = `Observed ${warningSigns.length} meaningful warning sign(s) requiring caution: ${warningSigns.slice(0, 3).join("; ")}.`;
@@ -1997,12 +2221,52 @@ export function assessInvestigation(params: {
     }
   );
 
-  // 8. Explicit Transparency Limitations
-  const limitations = [
-    "AheadGuard provides decision support based on observed evidence; it does not replace antivirus or browser security sandboxes.",
-    "Absence of detected warning signs is not a mathematical guarantee of safety.",
-    "Read-only inspection cannot verify backend server storage, database handling, or internal code vulnerabilities.",
-  ];
+  // 8. Backfill and normalize structured evidence provenance on all findings
+  for (let i = 0; i < evidenceItems.length; i++) {
+    const f = evidenceItems[i];
+    if (!f.id) {
+      f.id = `finding-${i + 1}-${f.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    }
+    if (!f.evidenceNature) {
+      if (f.provenance === "policy_rule") {
+        f.evidenceNature = "derived_policy_rule";
+      } else if (f.provenance === "browser_observation" || f.provenance === "redirect_analysis" || f.provenance === "url_structure") {
+        f.evidenceNature = "direct_observation";
+      } else {
+        f.evidenceNature = "user_input_assertion";
+      }
+    }
+    if (!f.sourceType) {
+      f.sourceType =
+        f.provenance === "url_structure"
+          ? "submitted_url"
+          : f.provenance === "redirect_analysis"
+          ? "observed_destination"
+          : f.provenance === "policy_rule"
+          ? "heuristic_rule"
+          : "observed_destination";
+    }
+    // Only set sourceUrl if this finding was directly extracted from an external URL.
+    // Policy-derived findings and user prose assertions do NOT fabricate a web source URL.
+    if (!f.sourceUrl) {
+      if (f.provenance === "browser_observation" || f.provenance === "redirect_analysis") {
+        f.sourceUrl = finalUrlStr || submittedUrl.toString();
+      } else if (f.provenance === "url_structure") {
+        f.sourceUrl = submittedUrl.toString();
+      }
+    }
+    // Only set observedAt if this was an actual external observation provided by the crawler
+    // Does NOT fabricate report generation timestamp as observation timestamp
+    if (!f.observedAt && (f.provenance === "browser_observation" || f.provenance === "redirect_analysis")) {
+      if (tinyFishResult.observedAt) {
+        f.observedAt = tinyFishResult.observedAt;
+      }
+    }
+    // accessible boolean: Only meaningful for actual probed network endpoints
+    if (f.accessible === undefined && f.sourceUrl && (f.provenance === "browser_observation" || f.provenance === "redirect_analysis")) {
+      f.accessible = !structured?.access_blocked && !tinyFishResult.goalFailed;
+    }
+  }
 
   return {
     investigationId,

@@ -144,6 +144,12 @@ aheadguard-mvp-starter/
 
    # Comma-separated 32-character lowercase Chrome Extension IDs approved for CORS
    ALLOWED_EXTENSION_IDS=abcdefghijklmnopqrstuvwxyzabcdef
+
+   # Neon Serverless Postgres Connection String (for persistence)
+   DATABASE_URL=postgresql://user:password@ep-sample-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
+
+   # Administrator Secret Key for querying stored investigation history (/api/investigate?action=history)
+   AHEADGUARD_ADMIN_KEY=your_secure_admin_secret_key_here
    ```
 
 4. Build the Chrome extension assets:
@@ -185,6 +191,90 @@ For the Chrome Extension to access the production API at `https://aheadguard-ai.
 3. Click **Save** and redeploy.
 
 Without this setting, the server will defensively reject extension requests with `403 Forbidden: CORS origin not allowed.`
+
+### Production Environment Variables (Vercel)
+
+For production deployment at `https://aheadguard-ai.vercel.app`, configure these environment variables in your Vercel Project Settings (**Settings -> Environment Variables**):
+
+| Variable Name | Required | Description |
+|:---|:---:|:---|
+| `TINYFISH_API_KEY` | Yes | API key for TinyFish headless web crawler |
+| `ALLOWED_EXTENSION_IDS` | Yes | Comma-separated 32-letter Chrome Extension IDs allowed for CORS |
+| `DATABASE_URL` | Recommended | Neon PostgreSQL connection string with `?sslmode=require` |
+| `AHEADGUARD_ADMIN_KEY` | Recommended | Secret key for administrative history and record access |
+
+> **Note on Administrator Key Configuration:**
+> The canonical environment variable name for administrator authentication is strictly `AHEADGUARD_ADMIN_KEY`. AheadGuard AI intentionally does not implement fallback aliases (such as `ADMIN_API_KEY`) to prevent accidental configuration drift or ambiguity across deployment environments.
+
+### Database Migration & Schema Setup
+
+AheadGuard uses an idempotent schema migration runner to provision the `investigations` table and indexes in Neon PostgreSQL.
+
+- **1. Local Development Execution (loads `.env.local`):**
+  ```powershell
+  npm run db:migrate
+  ```
+  *(Executes `node --env-file=.env.local scripts/migrate.mjs` using the local development `.env.local` file).*
+
+- **2. Isolated Test Execution (Windows PowerShell with Dedicated Test Database):**
+  Use an explicitly identified non-production test database branch to verify migrations without affecting production data:
+  ```powershell
+  $secUrl = Read-Host "Enter isolated test DATABASE_URL" -AsSecureString
+  $bstr = [System.IntPtr]::Zero
+  $plainUrl = $null
+  try {
+      $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secUrl)
+      $plainUrl = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+      $env:DATABASE_URL = $plainUrl
+      node scripts/migrate.mjs
+      if ($LASTEXITCODE -ne 0) { throw "Migration failed with code $LASTEXITCODE" }
+      Write-Host "Migration executed successfully on isolated test database." -ForegroundColor Green
+  } catch {
+      Write-Error "Migration execution error: $_"
+  } finally {
+      if ($bstr -ne [System.IntPtr]::Zero) {
+          [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+      }
+      Remove-Item env:DATABASE_URL -ErrorAction SilentlyContinue
+      $plainUrl = $null
+      $secUrl = $null
+  }
+  ```
+
+- **3. Production Execution (Owner-Authorized Release Gate Only):**
+  Production migration must be executed exclusively by the repository owner following explicit authorization:
+  - **Prerequisite 1 — Credential Rotation:** Rotate the Neon database password in the Neon Console to ensure fresh credentials before production deployment.
+  - **Prerequisite 2 — Configuration Synchronization:** Update `DATABASE_URL` and `AHEADGUARD_ADMIN_KEY` in Vercel Production Environment Variables.
+  - **Prerequisite 3 — Target Branch Confirmation:** Verify that the target database endpoint strictly corresponds to the primary production branch (`main`), not a preview branch or local development database.
+  - **Prerequisite 4 — Recovery Plan:** Create an immediate Neon branch snapshot prior to running the migration. Note that point-in-time recovery (PITR) rewinds database state; any investigations logged between the snapshot time and a potential restore would be omitted.
+  - **Execution:** Run `node scripts/migrate.mjs` via an ephemeral secure PowerShell session where credentials are provided interactively via `Read-Host -AsSecureString` and never written to disk or logs.
+  - **Post-Verification:** Verify schema integrity and execute live smoke tests (`npm run test:smoke`) against the deployed production API.
+
+> **Security Analysis of PowerShell .NET Memory Boundary:**
+> `Read-Host -AsSecureString` prevents terminal echo and excludes sensitive input from `PSReadLine` command history (`ConsoleHistory.txt`). `Marshal.ZeroFreeBSTR` immediately zeroes unmanaged BSTR memory. However, passing the credential to Node.js requires conversion to a .NET string (`PtrToStringBSTR`), which allocates an immutable managed `System.String` on the CLR heap that cannot be explicitly zeroized from script execution and persists until garbage collection. In the `finally` block, `Remove-Item env:DATABASE_URL` clears the process environment variable and `$plainUrl = $null` unroots the managed string reference. For zero-residual compliance, execute migrations in an ephemeral PowerShell sub-process (`powershell -NoProfile -Command ...`).
+
+> **Migration Concurrency & Non-Destructive Integrity Safety:**
+> 1. **Dedicated Session & Advisory Locking:** The migration establishes a single dedicated PostgreSQL connection (`Client`) over WebSockets (via the `ws` package) rather than stateless HTTP requests. It configures bounded session timeouts (`SET lock_timeout = '5000ms';` and `SET statement_timeout = '10000ms';`) and acquires a session-level advisory lock (`pg_advisory_lock(7429103)`). All pre-validation checks and DDL run on this exact live session. The lock is released on the same session in `finally`, and closing the session (`client.end()`) guarantees PostgreSQL will release any session locks even in the event of an abnormal abort.
+> 2. **Pre-Validation on Existing Tables:** If `public.investigations` already exists, the runner pre-validates column specifications, data types, nullability, and primary key constraints **before** attempting any index creation or DDL mutations. If drift is detected, it aborts immediately with 0 mutations.
+> 3. **Comprehensive Verification:** Following table/index provisioning, the runner validates all 10 column specifications, primary key on `id`, index definitions (including descending sort on `created_at`), and detects foreign index collisions in schema `public`.
+> 4. **No Destructive Operations & Recovery Nuances:** Never execute `DROP TABLE` on production databases. For disaster recovery, utilize Neon point-in-time recovery (PITR) or branch snapshots. Note the operational consequences:
+>    - Restoring an earlier snapshot rewinds state and omits valid investigation records written after the snapshot timestamp.
+>    - Restoring to a new branch provisions a distinct connection endpoint; application and migration configurations must be deliberately updated to route to the new endpoint.
+>    - Existing connections to the prior endpoint will fail or write to stale branches.
+>    - Always manually verify table definitions and record integrity immediately after restoration before routing user traffic.
+
+### Client IP Resolution & Rate Limiting Trust Model
+
+AheadGuard implements an in-memory sliding window rate limiter (20 req/min, burst 5 req/5s per IP) on `/api/investigate`.
+
+- **Proxy Trust Boundary & Anti-Spoofing:** On Vercel (`https://aheadguard-ai.vercel.app`), the edge reverse proxy terminates the incoming client TCP connection and unconditionally overwrites `X-Real-IP` with the client socket IP address. AheadGuard strictly resolves client IP from `X-Real-IP`. Client-supplied `X-Real-IP` headers are discarded at the edge.
+- **Elimination of Unverified Fallbacks:** Forwarding headers like `X-Forwarded-For` are client-controlled and untrusted. AheadGuard **never** falls back to `X-Forwarded-For` when `X-Real-IP` is absent or malformed. Treating client-provided forwarding headers as authoritative would allow attackers to rotate headers and bypass rate limits entirely.
+- **Fallback Policy & Availability Impact:** If `X-Real-IP` is absent, empty, whitespace-only, or syntactically invalid (e.g. malformed IP), the request maps to the fallback loopback bucket (`127.0.0.1`).
+  - *Availability limitation:* Unverified requests without a valid canonical IP share this single bucket. An attacker flooding unverified requests can exhaust this fallback bucket, resulting in HTTP 429 responses for other requests lacking a canonical IP.
+  - *Isolation guarantee:* Legitimate external clients with valid canonical `X-Real-IP` headers operate in independent rate-limit buckets and are completely unaffected by fallback bucket exhaustion.
+- **Upstream Reverse Proxy / CDN Boundary:** If an external CDN or reverse proxy (such as Cloudflare) is layered in front of Vercel without enterprise custom proxy header configuration, Vercel Edge treats the external proxy's egress node as the client IP, grouping proxied requests into the same rate-limit bucket.
+- **Syntactic Validation & Dual-Stack Normalization:** All candidate addresses are verified via Node.js `net.isIP()`. IPv4-mapped IPv6 addresses (`::ffff:x.x.x.x`) are normalized to IPv4 to prevent bucket splitting between IPv4 and dual-stack clients.
+- **Architecture Note:** The rate limiter operates per serverless compute container instance. In multi-container or serverless cold-start topologies, rate limits are instance-local. For globally synchronized multi-region rate limiting across all edge nodes, an external distributed store (such as Upstash Redis or Vercel KV with `@upstash/ratelimit`) should be configured.
 
 ---
 

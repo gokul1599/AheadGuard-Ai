@@ -9,12 +9,15 @@
     "lint": "eslint .",
     "test": "vitest run",
     "build:extension": "node build-extension.mjs",
-    "build:all": "npm run build && npm run build:extension"
+    "build:all": "npm run build && npm run build:extension",
+    "db:migrate": "node --env-file=.env.local scripts/migrate.mjs"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
     "next": "^15.5.28",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "ws": "^8.22.0",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -22,6 +25,7 @@
     "@types/node": "^22.19.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "eslint": "^9.37.0",
     "eslint-config-next": "15.5.6",

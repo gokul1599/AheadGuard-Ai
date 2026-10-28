@@ -1,16 +1,19 @@
 import { NextResponse } from "next/server";
 import { InputSchema } from "@/lib/types";
 import { validateAndNormalizeUrl } from "@/lib/url-safety";
+import { sanitizeUrlForSharing } from "@/lib/share-report";
 import { executeTinyFishInvestigation } from "@/lib/tinyfish";
 import { assessInvestigation } from "@/lib/policy";
 import { analyzeMessageText } from "@/lib/message-intelligence";
 import { verifyCompanyIdentity, verifyJobListing } from "@/lib/company-verification";
 import { enrichReportWithScamIntelligence, createTextOnlyReport } from "@/lib/claims-evaluator";
+import { saveInvestigation, getRecentInvestigations, getInvestigationById, testDatabaseConnection } from "@/lib/db";
 import type { ProgressEvent, InvestigationReport } from "@/lib/types";
 import {
   isAllowedOrigin,
   checkRateLimit,
   getClientIp,
+  verifyAdminAuth,
 } from "@/lib/api-security";
 
 export const runtime = "nodejs";
@@ -21,7 +24,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
   if (origin && isAllowedOrigin(origin)) {
     return {
       "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
       "Access-Control-Allow-Headers": "Content-Type, Accept",
       "Vary": "Origin",
     };
@@ -66,6 +69,67 @@ function sanitizeClientError(error: unknown): string {
     .replace(/[A-Za-z]:\\[^\s]+/g, "")
     .replace(/\/[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.]+/g, "")
     .trim() || "An unexpected investigation error occurred.";
+}
+
+export async function GET(request: Request) {
+  const origin = request.headers.get("origin");
+  if (origin && !isAllowedOrigin(origin)) {
+    return new Response("CORS origin not allowed.", { status: 403 });
+  }
+
+  // Rate limiting & abuse protection
+  const clientIp = getClientIp(request);
+  const rateLimit = checkRateLimit(clientIp);
+  if (!rateLimit.allowed) {
+    return jsonResponse(
+      request,
+      { error: "Too many requests. Please wait." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(rateLimit.retryAfter || 60),
+          "X-RateLimit-Limit": String(rateLimit.limit),
+          "X-RateLimit-Remaining": "0",
+        },
+      }
+    );
+  }
+
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get("action");
+  const id = searchParams.get("id");
+
+  // Protected Record Access: Querying individual investigations or centralized history requires Admin authorization
+  if (id || action === "history") {
+    if (!verifyAdminAuth(request)) {
+      return jsonResponse(
+        request,
+        { error: "Unauthorized: administrator credentials required to access stored records." },
+        { status: 401 }
+      );
+    }
+
+    if (id) {
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(id)) {
+        return jsonResponse(request, { error: "Invalid investigation ID format." }, { status: 400 });
+      }
+      const report = await getInvestigationById(id);
+      if (!report) {
+        return jsonResponse(request, { error: "Investigation report not found." }, { status: 404 });
+      }
+      return jsonResponse(request, { report }, { status: 200 });
+    }
+
+    if (action === "history") {
+      const history = await getRecentInvestigations(20);
+      return jsonResponse(request, { investigations: history }, { status: 200 });
+    }
+  }
+
+  // Safe database health check: returns connection status without leaking schema, version, or credentials
+  const dbStatus = await testDatabaseConnection();
+  const statusCode = dbStatus.ok ? 200 : dbStatus.status === "unconfigured" ? 200 : 503;
+  return jsonResponse(request, { db: dbStatus }, { status: statusCode });
 }
 
 export async function POST(request: Request) {
@@ -145,14 +209,54 @@ export async function POST(request: Request) {
       } else if (messageData.extractedUrls.length === 1) {
         candidateUrl = messageData.extractedUrls[0];
       } else if (messageData.extractedUrls.length > 1) {
-        // Multiple URLs detected in message -> Prompt user to select target
+        // Multiple URLs detected in message -> Classify each against security & privacy policy
+        const classified = messageData.extractedUrls.map((rawUrl) => {
+          const val = validateAndNormalizeUrl(rawUrl);
+          return {
+            rawUrl,
+            sanitizedUrl: sanitizeUrlForSharing(rawUrl),
+            isSafe: val.valid,
+            error: val.valid ? undefined : val.error,
+          };
+        });
+
+        const safeUrls = classified.filter((c) => c.isSafe).map((c) => c.rawUrl);
+        const rejectedUrls = classified.filter((c) => !c.isSafe);
+
+        // Fail-closed: If every extracted link contains sensitive credentials or is unsafe, reject pre-flight
+        if (safeUrls.length === 0) {
+          return jsonResponse(
+            request,
+            {
+              error:
+                "All extracted destination URLs contain sensitive authentication tokens or credentials and cannot be investigated to protect your privacy and security. Please remove credentials before submitting.",
+            },
+            { status: 400 }
+          );
+        }
+
+        // Clean messageData to guarantee NO raw secrets appear in client responses
+        const safeMessageData = {
+          ...messageData,
+          originalText: messageData.redactedText,
+          extractedUrls: safeUrls,
+          singleExtractedUrl: safeUrls.length === 1 ? safeUrls[0] : undefined,
+        };
+
+        const rejectedNote =
+          rejectedUrls.length > 0
+            ? ` (${rejectedUrls.length} link containing sensitive credentials or unsafe destination was omitted for privacy).`
+            : "";
+
+        const promptMessage = `Multiple destination links detected in message. Please select which destination to investigate.${rejectedNote}`;
+
         if (acceptsSse) {
           return new Response(
             `event: multiple_urls\ndata: ${JSON.stringify({
               type: "multiple_urls",
-              extractedUrls: messageData.extractedUrls,
-              message: "Multiple destination links detected in message. Please select which destination to investigate.",
-              messageData,
+              extractedUrls: safeUrls,
+              message: promptMessage,
+              messageData: safeMessageData,
             })}\n\n`,
             {
               headers: {
@@ -168,9 +272,9 @@ export async function POST(request: Request) {
             request,
             {
               multipleUrls: true,
-              extractedUrls: messageData.extractedUrls,
-              message: "Multiple destination links detected in message. Please select which destination to investigate.",
-              messageData,
+              extractedUrls: safeUrls,
+              message: promptMessage,
+              messageData: safeMessageData,
             },
             { status: 200 }
           );
@@ -198,11 +302,31 @@ export async function POST(request: Request) {
         feeWarningPresent: Boolean(messageData.recruitmentFeeWarning?.detected),
       });
 
+      const safeMessageData = {
+        ...messageData,
+        originalText: messageData.redactedText,
+        extractedUrls: messageData.extractedUrls.map(sanitizeUrlForSharing),
+      };
+
       const textReport = createTextOnlyReport({
-        messageData,
+        messageData: safeMessageData,
         companyIdentity,
         jobVerification,
       });
+
+      // Persist to Neon (non-blocking failure, strictly bounded to max 5s)
+      try {
+        const dbRes = await saveInvestigation(textReport);
+        textReport.persisted = dbRes.ok;
+        textReport.storageMode = dbRes.ok ? "persisted" : "ephemeral";
+        if (!dbRes.ok && dbRes.error !== "Database not configured") {
+          console.warn("[DB] Non-fatal text report persistence warning:", dbRes.error);
+        }
+      } catch (dbErr) {
+        textReport.persisted = false;
+        textReport.storageMode = "ephemeral";
+        console.error("[DB] Non-fatal text report persistence error:", dbErr instanceof Error ? dbErr.message : String(dbErr));
+      }
 
       if (acceptsSse) {
         return new Response(
@@ -257,9 +381,15 @@ export async function POST(request: Request) {
         observedPageSnippet: baseReport.observedFacts?.visiblePurpose,
       });
 
+      const safeMessageData = {
+        ...messageData,
+        originalText: messageData.redactedText,
+        extractedUrls: messageData.extractedUrls.map(sanitizeUrlForSharing),
+      };
+
       return enrichReportWithScamIntelligence({
         report: baseReport,
-        messageData,
+        messageData: safeMessageData,
         companyIdentity,
         jobVerification,
         analysisMode: analysisMode || (isExplicitLinkMode ? "link" : "message"),
@@ -309,6 +439,21 @@ export async function POST(request: Request) {
 
           const finalReport = finalizeReport(baseReport);
 
+          // 1. Await Neon persistence before sending the final report to guarantee accurate persistence status
+          // Keeping writer open guarantees the serverless context remains active until the write completes or safely times out
+          let dbRes: { ok: boolean; error?: string } = { ok: false, error: "Database not configured" };
+          try {
+            dbRes = await saveInvestigation(finalReport);
+            if (!dbRes.ok && dbRes.error !== "Database not configured") {
+              console.warn("[DB] Non-fatal streaming report persistence warning:", dbRes.error);
+            }
+          } catch (dbErr) {
+            console.error("[DB] Non-fatal streaming report persistence error:", dbErr instanceof Error ? dbErr.message : String(dbErr));
+          }
+          finalReport.persisted = dbRes.ok;
+          finalReport.storageMode = finalReport.isDemo ? "demo" : dbRes.ok ? "persisted" : "ephemeral";
+
+          // 2. Stream final report event with accurate persistence metadata
           await sendEvent({
             type: "report",
             report: finalReport,
@@ -367,6 +512,19 @@ export async function POST(request: Request) {
       });
 
       const finalReport = finalizeReport(baseReport);
+
+      // Persist to Neon before returning response (bounded by 5s withTimeout)
+      let dbRes: { ok: boolean; error?: string } = { ok: false, error: "Database not configured" };
+      try {
+        dbRes = await saveInvestigation(finalReport);
+        if (!dbRes.ok && dbRes.error !== "Database not configured") {
+          console.warn("[DB] Non-fatal JSON report persistence warning:", dbRes.error);
+        }
+      } catch (dbErr) {
+        console.error("[DB] Non-fatal JSON report persistence error:", dbErr instanceof Error ? dbErr.message : String(dbErr));
+      }
+      finalReport.persisted = dbRes.ok;
+      finalReport.storageMode = finalReport.isDemo ? "demo" : dbRes.ok ? "persisted" : "ephemeral";
 
       return jsonResponse(request, { report: finalReport }, { status: 200 });
     } catch (error) {

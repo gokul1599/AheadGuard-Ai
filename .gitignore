@@ -9,3 +9,5 @@ tsconfig.tsbuildinfo
 
 .vercel
 *benchmark*
+!lib/benchmark.ts
+!tests/benchmark.test.ts

@@ -4,11 +4,36 @@ export type RiskOutcome = "Low observed risk" | "Unknown" | "Suspicious" | "High
 export type ThreatLikelihood = "Low" | "Moderate" | "High" | "Uncertain";
 export type ConsequenceImpact = "Low" | "Moderate" | "High" | "Severe";
 
+export type EvidenceNature =
+  | "direct_observation"
+  | "derived_policy_rule"
+  | "registry_reference"
+  | "user_input_assertion"
+  | "absence_of_evidence";
+
 export interface Finding {
   label: string;
   detail: string;
   kind: "positive" | "warning" | "neutral";
   provenance: "url_structure" | "browser_observation" | "page_content" | "redirect_analysis" | "policy_rule";
+  id?: string;
+  evidenceNature?: EvidenceNature;
+  sourceUrl?: string;
+  sourceType?:
+    | "official_corporate_site"
+    | "official_careers_page"
+    | "brand_registry"
+    | "user_provided_careers_url"
+    | "observed_destination"
+    | "external_source"
+    | "submitted_url"
+    | "page_content"
+    | "heuristic_rule";
+  observedAt?: string;
+  snippet?: string;
+  accessible?: boolean;
+  limitations?: string;
+  rationale?: string;
 }
 
 export interface CheckPerformed {
@@ -93,7 +118,7 @@ export interface ClaimRecord {
   explanation: string;
   supportingSources?: ClaimSourceReference[];
   sourceUrl?: string;
-  sourceType?: ClaimSourceReference["sourceType"] | "none";
+  sourceType?: ClaimSourceReference["sourceType"] | "none" | "heuristic_rule";
   provenance: "message_text" | "browser_observation" | "brand_registry" | "external_source" | "user_input";
   retrievedAt: string;
   limitations?: string;
@@ -231,6 +256,9 @@ export interface InvestigationReport {
   isDemo?: boolean;
   demoScenarioId?: string;
   demoDisclaimer?: string;
+  // Database persistence state
+  persisted?: boolean;
+  storageMode?: "persisted" | "ephemeral" | "demo";
 }
 
 export interface ProgressEvent {

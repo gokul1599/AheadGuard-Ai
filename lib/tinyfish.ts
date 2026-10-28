@@ -8,10 +8,12 @@ export interface TinyFishRunOptions {
 }
 
 export interface TinyFishStructuredResult {
+  submitted_url?: string;
   page_title?: string;
   observed_final_url?: string;
   claimed_organization?: string;
   visible_purpose?: string;
+  access_blocked?: boolean | string;
   credential_or_payment_request?: boolean | string;
   login_form_observed?: boolean | string;
   password_field_observed?: boolean | string;
@@ -40,6 +42,7 @@ export interface TinyFishExecutionResult {
   receivedEventTypes?: string[];
   httpStatus?: number;
   streamEndedNormally?: boolean;
+  observedAt?: string;
 }
 
 export const READ_ONLY_INVESTIGATION_GOAL = [
@@ -613,5 +616,6 @@ export async function executeTinyFishInvestigation(
     receivedEventTypes,
     httpStatus: response.status,
     streamEndedNormally,
+    observedAt: new Date().toISOString(),
   };
 }

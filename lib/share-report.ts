@@ -1,48 +1,159 @@
 import { InvestigationReport } from "./types";
 import { redactSensitivePii } from "./message-intelligence";
 
-const SENSITIVE_PARAM_KEYS = [
+// Innocent parameters that contain common substrings (e.g. "key" or "code") that must NOT be redacted
+const INNOCENT_PARAM_NAMES = new Set([
+  "keyword",
+  "keywords",
+  "country_code",
+  "countrycode",
+  "country-code",
+  "zip_code",
+  "zipcode",
+  "zip-code",
+  "postal_code",
+  "postalcode",
+  "postal-code",
+  "language_code",
+  "lang_code",
+  "languagecode",
+  "area_code",
+  "areacode",
+  "currency_code",
+  "currencycode",
+  "status_code",
+  "statuscode",
+  "error_code",
+  "err_code",
+  "product_code",
+  "item_code",
+  "page",
+  "limit",
+  "offset",
+  "sort",
+  "order",
+  "filter",
+  "query",
+  "search",
+  "category",
+  "tag",
+  "tags",
+  "view",
+  "tab",
+  "lang",
+  "format",
+]);
+
+// Exact sensitive parameter names (evaluated case-insensitively with delimiters normalized)
+const EXACT_SENSITIVE_PARAM_NAMES = new Set([
   "token",
-  "auth",
+  "tokens",
+  "access_token",
+  "access-token",
+  "accesstoken",
+  "refresh_token",
+  "refresh-token",
+  "refreshtoken",
+  "id_token",
+  "id-token",
+  "idtoken",
+  "auth_token",
+  "auth-token",
+  "authtoken",
+  "session_token",
+  "session-token",
+  "sessiontoken",
   "session",
+  "session_id",
+  "session-id",
+  "sessionid",
+  "sess_id",
+  "sessid",
   "key",
+  "api_key",
+  "api-key",
+  "apikey",
+  "secret_key",
+  "secret-key",
+  "secretkey",
+  "private_key",
+  "private-key",
+  "privatekey",
+  "app_key",
+  "app-key",
+  "appkey",
   "secret",
-  "sig",
-  "signature",
+  "client_secret",
+  "client-secret",
+  "clientsecret",
   "password",
   "passwd",
   "pwd",
+  "user_password",
+  "userpassword",
   "otp",
-  "code",
-  "jwt",
-  "id_token",
-  "access_token",
-  "refresh_token",
-  "api_key",
-  "apikey",
-  "email",
-  "user",
-  "username",
-  "uid",
-  "account",
-  "acct",
+  "otp_code",
+  "otp-code",
+  "otpcode",
+  "totp",
   "pin",
+  "pin_code",
+  "code", // OAuth2 authorization code
+  "auth_code",
+  "auth-code",
+  "authcode",
+  "verification_code",
+  "verification-code",
+  "verificationcode",
+  "state", // OAuth2 state token
+  "jwt",
+  "bearer",
+  "signature",
+  "sig",
+  "auth",
+  "authorization",
   "credential",
-  "private",
-  "phone",
-  "mobile",
-  "card",
-  "pan",
-  "aadhaar",
+  "credentials",
+  "user_credentials",
+  "usercredentials",
+  "card_number",
+  "cardnumber",
+  "cvv",
+  "cvc",
   "ssn",
-];
+  "aadhaar",
+  "pan",
+]);
 
-function isSensitiveKey(key: string): boolean {
-  const k = key.toLowerCase();
-  return SENSITIVE_PARAM_KEYS.some((p) => k.includes(p));
+export function isSensitiveKey(key: string): boolean {
+  if (!key || typeof key !== "string") return false;
+  const k = key.trim().toLowerCase();
+
+  // 1. Explicit whitelist: Never redact known innocent parameters
+  if (INNOCENT_PARAM_NAMES.has(k)) {
+    return false;
+  }
+
+  // 2. Exact match against known sensitive parameters
+  if (EXACT_SENSITIVE_PARAM_NAMES.has(k)) {
+    return true;
+  }
+
+  // 3. Normalized delimiter match (handles client.secret, token-id, etc.)
+  const normalized = k.replace(/[\._\-]/g, "");
+  if (EXACT_SENSITIVE_PARAM_NAMES.has(normalized)) {
+    return true;
+  }
+
+  // 4. Boundary delimiter match (matches auth_*, *_token, *_secret, *_key without false matches on innocent words)
+  if (/(?:^|[_\-.])(token|secret|password|passwd|pwd|apikey|api_key|auth|session|credential|credentials|privkey|privatekey)(?:$|[_\-.])/i.test(k)) {
+    return true;
+  }
+
+  return false;
 }
 
-function containsSensitiveValue(value: string): boolean {
+export function containsSensitiveValue(value: string): boolean {
   if (!value || typeof value !== "string") return false;
   // Emails
   if (/@\w+[\.\w+]+/.test(value)) return true;
@@ -52,6 +163,8 @@ function containsSensitiveValue(value: string): boolean {
   if (/\b\d{12,19}\b/.test(value)) return true;
   // Obvious secret prefixes
   if (/^(?:sk_live|sk_test|pk_live|ghp_|tf_live|AIza|Bearer\s)/i.test(value)) return true;
+  // Embedded secret assignments in parameter value (e.g. redirect urls with embedded tokens)
+  if (/(?:password|passwd|api_key|apikey|secret|token|bearer)=/i.test(value)) return true;
   return false;
 }
 
@@ -106,7 +219,10 @@ export function sanitizeUrlForSharing(rawUrl: string): string {
     // If URL parsing fails, apply regex-based query parameter and fragment stripping
     let sanitized = rawUrl;
     // Strip sensitive query params: ?token=... or &key=...
-    sanitized = sanitized.replace(/([?&])(?:token|auth|session|key|secret|sig|password|pwd|otp|code|jwt|access_token|refresh_token|api_key|email)=[^&\s#]+/gi, "$1[REDACTED]");
+    sanitized = sanitized.replace(
+      /([?&])(?:token|auth|session|sessionid|key|secret|client_secret|sig|signature|password|passwd|pwd|otp|otp_code|code|state|jwt|bearer|access_token|access-token|refresh_token|id_token|auth_token|session_token|api_key|apikey|private_key|credential|credentials|email)=[^&\s#]+/gi,
+      "$1[REDACTED]"
+    );
     // Clean up empty params
     sanitized = sanitized.replace(/[?&]\[REDACTED\]/g, "");
     // Strip secret hash fragments

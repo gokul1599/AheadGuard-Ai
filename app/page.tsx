@@ -1194,6 +1194,27 @@ export default function Home() {
                       Job: {intel.jobVerification.status}
                     </span>
                   )}
+
+                  {/* Storage Persistence Badge */}
+                  <span
+                    className={`intel-badge ${
+                      result.isDemo
+                        ? "badge-neutral"
+                        : result.persisted
+                        ? "badge-match"
+                        : "badge-unverified"
+                    }`}
+                    title={
+                      result.isDemo
+                        ? "Offline demonstration report"
+                        : result.persisted
+                        ? "Persisted to Neon database (encrypted at rest)"
+                        : "In-memory ephemeral report (database not configured or persistence bypassed)"
+                    }
+                  >
+                    <Icon name={result.isDemo ? "sparkles" : result.persisted ? "shield-check" : "info"} />
+                    Storage: {result.isDemo ? "Offline Demo" : result.persisted ? "Database Saved" : "Ephemeral"}
+                  </span>
                 </div>
               )}
 

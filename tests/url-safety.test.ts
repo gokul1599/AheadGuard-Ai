@@ -77,6 +77,12 @@ describe("Input & Network Safety (Tests 1 - 4)", () => {
       "http://0177.0.0.1", // Octal representation of 127.0.0.1
       "http://0x7f000001", // Hex representation of 127.0.0.1
       "http://2130706433", // Dword integer representation of 127.0.0.1
+      "http://0", // Integer 0 (0.0.0.0)
+      "http://127.1", // 2-part shorthand (127.0.0.1)
+      "http://127.0.1", // 3-part shorthand (127.0.0.1)
+      "http://10.1", // 2-part private shorthand (10.0.0.1)
+      "http://192.168.1", // 3-part private shorthand (192.168.0.1)
+      "http://169.254.1", // 3-part link-local shorthand
       "http://admin:secret123@example.com", // Embedded credentials
     ];
 
@@ -85,6 +91,44 @@ describe("Input & Network Safety (Tests 1 - 4)", () => {
       expect(result.valid).toBe(false);
       if (!result.valid) {
         expect(result.error).toBeDefined();
+      }
+    }
+  });
+
+  it("Test 5: Rejects URLs containing sensitive credentials, tokens, or passwords in query params or fragments", () => {
+    const sensitiveUrls = [
+      "https://example.com/reset-password?token=TEST_SECRET_DO_NOT_LEAK",
+      "https://example.com/login?password=MY_SECRET_PASSWORD",
+      "https://example.com/api/v1?api_key=sk_live_1234567890abcdef",
+      "https://example.com/oauth/callback?code=OAUTH_AUTH_CODE&state=CSRF_STATE_VAL",
+      "https://example.com/auth?access_token=eyJhbGciOiJIUzI1NiJ9.test.abc",
+      "https://example.com/session?sessionid=SESSION_COOKIE_VALUE",
+      "https://example.com/oauth#access_token=FRAGMENT_SECRET_DO_NOT_LEAK",
+      "https://example.com/profile?client_secret=TOP_SECRET_HEX_VAL",
+      "https://example.com/verify?otp=123456",
+    ];
+
+    for (const url of sensitiveUrls) {
+      const result = validateAndNormalizeUrl(url);
+      expect(result.valid).toBe(false);
+      if (!result.valid) {
+        expect(result.error).toMatch(/sensitive|credentials|tokens|passwords|hash fragments/i);
+      }
+    }
+  });
+
+  it("Test 6: Preserves innocent non-sensitive query parameters and normalizes correctly", () => {
+    const innocentUrls = [
+      "https://example.com/search?keyword=software+engineer&page=2&sort=desc",
+      "https://example.com/jobs?country_code=US&zip_code=94105&category=technology",
+      "https://example.com/catalog?status_code=active&product_code=A100&limit=50",
+    ];
+
+    for (const url of innocentUrls) {
+      const result = validateAndNormalizeUrl(url);
+      expect(result.valid).toBe(true);
+      if (result.valid) {
+        expect(result.normalizedUrl).toContain("example.com");
       }
     }
   });

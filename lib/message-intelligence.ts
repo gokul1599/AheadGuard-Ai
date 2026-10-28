@@ -34,7 +34,16 @@ export function extractUrlsFromText(text: string): string[] {
   const normalizedUrls: string[] = [];
 
   for (const raw of matches) {
-    let clean = raw.trim().replace(/[.,;!?]+$/, ""); // strip trailing punctuation
+    let clean = raw.trim().replace(/[.,;:!?]+$/, ""); // strip trailing punctuation
+    // Strip trailing closing brackets or parentheses if not opened within the URL string
+    while (clean.endsWith(")") && (clean.match(/\(/g) || []).length < (clean.match(/\)/g) || []).length) {
+      clean = clean.slice(0, -1);
+    }
+    while (clean.endsWith("]") && (clean.match(/\[/g) || []).length < (clean.match(/\]/g) || []).length) {
+      clean = clean.slice(0, -1);
+    }
+    clean = clean.replace(/[.,;:!?]+$/, "");
+
     if (!clean.startsWith("http://") && !clean.startsWith("https://")) {
       clean = "https://" + clean;
     }
@@ -133,7 +142,7 @@ export function redactSensitivePii(text: string): { redactedText: string; redact
 
   // 8. Passwords, Credentials, and Secret Keys declared in text
   const credentialRegex =
-    /(?:password|passwd|pwd|passcode|secret[- ]key|api[- ]key|access[- ]token|private[- ]key)\s*(?:is\s+|:\s*|=\s*|\s+)([^\s,.;]+)/gi;
+    /(?:password|passwd|pwd|passcode|secret[-_ ]key|api[-_ ]key|access[-_ ]token|private[-_ ]key)\s*(?:is\s+|:\s*|=\s*|\s+)([^\s,.;]+)/gi;
   if (credentialRegex.test(current)) {
     redactions.push("Password / credential redacted");
     current = current.replace(credentialRegex, (match, credVal) => {
@@ -142,12 +151,28 @@ export function redactSensitivePii(text: string): { redactedText: string; redact
   }
 
   // 9. OTP / Verification codes following explicit OTP labels
-  const otpRegex = /(?:otp|one[- ]time[- ]password|verification[- ]code|security[- ]pin|auth[- ]code|login[- ]code)\s*(?:is|:|=)?\s*([0-9a-zA-Z]{4,8})\b/gi;
+  const otpRegex = /(?:otp|one[-_ ]time[-_ ]password|verification[-_ ]code|security[-_ ]pin|auth[-_ ]code|login[-_ ]code)\s*(?:is|:|=)?\s*([0-9a-zA-Z]{4,8})\b/gi;
   if (otpRegex.test(current)) {
     redactions.push("OTP / verification code redacted");
     current = current.replace(otpRegex, (match, code) => {
       return match.replace(code, "[CODE REDACTED]");
     });
+  }
+
+  // 10. Sensitive query parameters in URLs embedded in text (?token=..., &access_token=..., etc.)
+  const sensitiveUrlParamRegex =
+    /([?&](?:access[-_]?token|refresh[-_]?token|id[-_]?token|auth[-_]?token|session[-_]?token|sessionid|api[-_]?key|apikey|client[-_]?secret|private[-_]?key|password|passwd|pwd|otp|otp[-_]?code|token|secret|key|code|state|jwt|bearer)=)[^\s&"'#]+/gi;
+  if (sensitiveUrlParamRegex.test(current)) {
+    redactions.push("Sensitive URL query parameter redacted");
+    current = current.replace(sensitiveUrlParamRegex, "$1[REDACTED]");
+  }
+
+  // 11. Sensitive URL hash fragments (#access_token=..., etc.)
+  const sensitiveUrlFragmentRegex =
+    /(#(?:access[-_]?token|id[-_]?token|token|auth|secret|key)=)[^\s&"'#]+/gi;
+  if (sensitiveUrlFragmentRegex.test(current)) {
+    redactions.push("Sensitive URL hash fragment redacted");
+    current = current.replace(sensitiveUrlFragmentRegex, "$1[REDACTED]");
   }
 
   return { redactedText: current, redactions: Array.from(new Set(redactions)) };
@@ -241,13 +266,13 @@ export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | unde
   }> = [
     {
       type: "application_fee",
-      regex: /(?:pay|deposit|transfer|send)\s+(?:(?:an?|the|a|any|[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?)\s+)?(?:application|registration|processing|interview|portal|assessment)\s+fees?/i,
+      regex: /(?:pay|deposit|transfer|send)\s+(?:(?:an?|the|any)\s+)?(?:(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?)\s+)?(?:application|registration|processing|interview|portal|assessment)\s+fees?/i,
       explanation: "Legitimate employers never charge application or registration fees to evaluate candidates.",
     },
     {
       type: "security_deposit",
-      regex: /(?:refundable\s+)?(?:security\s+deposit|caution\s+deposit|guarantee\s+deposit)/i,
-      explanation: "Legitimate corporate recruiters do not ask candidates for refundable security deposits.",
+      regex: /(?:refundable\s+)?(?:security|caution|guarantee|equipment|laptop)\s+deposit/i,
+      explanation: "Legitimate corporate recruiters do not ask candidates for refundable security deposits or equipment advance deposits.",
     },
     {
       type: "training_fee",
@@ -256,7 +281,7 @@ export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | unde
     },
     {
       type: "equipment_fee",
-      regex: /(?:pay|deposit|advance)\s+(?:for\s+)?(?:laptop|equipment|home\s+office|courier|dispatch|id\s+card|uniform)/i,
+      regex: /(?:pay|deposit|advance)\s+(?:(?:an?|the|a|any|[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?)\s+)?(?:for\s+)?(?:laptop|equipment|home\s+office|courier|dispatch|id\s+card|uniform)/i,
       explanation: "Legitimate companies provide company equipment and do not ask candidates to advance funds for laptops or uniforms.",
     },
     {
@@ -275,6 +300,15 @@ export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | unde
       const end = text.indexOf(".", index + match[0].length);
       const quote = text.substring(start, end !== -1 ? end : undefined).trim();
 
+      // Negative guard: If the sentence states that the employer pays or provides equipment/training free:
+      const employerSubject = /(?:we|company|employer|firm|organization|sponsor)\s+(?:will\s+)?(?:pay|cover|absorb|provide|reimburse|bear)\s+(?:for\s+)?/i;
+      const candidateFree = /(?:at\s+no\s+cost|free\s+of\s+charge|no\s+(?:application\s+)?fees?|100%\s+free|never\s+(?:charge|ask\s+for\s+money))\b/i;
+      const candidateRequired = /(?:candidate|applicant|you)\s+(?:must|should|have\s+to|need\s+to|are\s+required\s+to|shall)\s+(?:pay|send|deposit|transfer)/i;
+
+      if ((employerSubject.test(quote) || candidateFree.test(quote)) && !candidateRequired.test(quote)) {
+        continue;
+      }
+
       return {
         detected: true,
         feeType: item.type,
@@ -288,13 +322,22 @@ export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | unde
   // Catch general patterns: "pay [amount] to get this job/offer"
   const generalPayMatch = text.match(/(?:pay|send|transfer|deposit)\s+(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd))\s+(?:to\s+(?:confirm|receive|get|claim|start)|for\s+(?:the\s+)?(?:job|offer|internship|training))/i);
   if (generalPayMatch) {
-    return {
-      detected: true,
-      feeType: "unspecified_fee",
-      quotedText: generalPayMatch[0],
-      explanation: "The message instructs the candidate to send funds to secure employment or complete the hiring process.",
-      riskLevel: "High",
-    };
+    const gIndex = generalPayMatch.index || 0;
+    const gStart = Math.max(0, text.lastIndexOf(".", gIndex) + 1);
+    const gEnd = text.indexOf(".", gIndex + generalPayMatch[0].length);
+    const gQuote = text.substring(gStart, gEnd !== -1 ? gEnd : undefined).trim();
+    const employerSubject = /(?:we|company|employer|firm|organization|sponsor)\s+(?:will\s+)?(?:pay|cover|absorb|provide|reimburse|bear)\b/i;
+    const candidateRequired = /(?:candidate|applicant|you)\s+(?:must|should|have\s+to|need\s+to|are\s+required\s+to|shall)\s+(?:pay|send|deposit|transfer)/i;
+
+    if (!employerSubject.test(gQuote) || candidateRequired.test(gQuote)) {
+      return {
+        detected: true,
+        feeType: "unspecified_fee",
+        quotedText: generalPayMatch[0],
+        explanation: "The message instructs the candidate to send funds to secure employment or complete the hiring process.",
+        riskLevel: "High",
+      };
+    }
   }
 
   return undefined;

@@ -96,10 +96,23 @@ export function evaluateAllClaims(params: {
 
     // 3. Recruitment Fee & Payment Claims
     if (claim.category === "recruitment_fee") {
+      const isFeeExemptionOrFree = /(?:no\s+(?:application\s+)?fees?|free\s+of\s+charge|zero\s+(?:upfront\s+)?fees?|never\s+charge|100%\s+free|no\s+deposit|without\s+(?:any\s+)?fee)/i.test(
+        claim.claimText
+      );
+      if (isFeeExemptionOrFree) {
+        return {
+          ...claim,
+          evaluation: "Supported",
+          explanation: "Verified statement: Legitimate employers do not require fees or monetary deposits for candidate consideration.",
+          sourceType: claim.sourceType || "heuristic_rule",
+          retrievedAt: now,
+        };
+      }
       return {
         ...claim,
         evaluation: "Contradicted",
         explanation: "Established employers never demand payment for applications, interviews, training, or equipment.",
+        sourceType: claim.sourceType || "heuristic_rule",
         retrievedAt: now,
       };
     }
@@ -260,10 +273,16 @@ export function enrichReportWithScamIntelligence(params: {
   // 4. Integrate recruitment fee findings into primary report
   if (messageData.recruitmentFeeWarning?.detected) {
     const feeItem: Finding = {
+      id: `finding-${updatedEvidenceItems.length + 1}-recruitment-fee-demanded`,
       label: "Recruitment Fee Demanded in Message",
       detail: messageData.recruitmentFeeWarning.quotedText,
       kind: "warning",
       provenance: "page_content",
+      evidenceNature: "user_input_assertion",
+      sourceType: "heuristic_rule",
+      snippet: messageData.recruitmentFeeWarning.quotedText,
+      rationale: messageData.recruitmentFeeWarning.explanation,
+      limitations: "Extracted directly from user-submitted message text; not observed on an authoritative careers portal.",
     };
     if (!updatedEvidenceItems.some((e) => e.label === feeItem.label)) {
       updatedEvidenceItems.push(feeItem);
@@ -277,10 +296,16 @@ export function enrichReportWithScamIntelligence(params: {
   // 5. Integrate identity mismatch findings into primary report
   if (companyIdentity.status === "Identity mismatch") {
     const mismatchItem: Finding = {
+      id: `finding-${updatedEvidenceItems.length + 1}-company-identity-mismatch`,
       label: "Company Identity Mismatch",
       detail: companyIdentity.explanation,
       kind: "warning",
-      provenance: "page_content",
+      provenance: "policy_rule",
+      evidenceNature: "derived_policy_rule",
+      sourceType: "brand_registry",
+      sourceUrl: companyIdentity.officialDomains[0] ? `https://${companyIdentity.officialDomains[0]}` : undefined,
+      rationale: companyIdentity.explanation,
+      limitations: "Derived by comparing destination host against the authoritative approved domains for this brand.",
     };
     if (!updatedEvidenceItems.some((e) => e.label === mismatchItem.label)) {
       updatedEvidenceItems.push(mismatchItem);
@@ -296,7 +321,11 @@ export function enrichReportWithScamIntelligence(params: {
   let finalThreatLikelihood = report.threatLikelihood;
   let finalOutcomeReason = report.outcomeReason;
 
-  if (messageData.recruitmentFeeWarning?.detected) {
+  if (messageData.recruitmentFeeWarning?.detected && companyIdentity.status === "Identity mismatch") {
+    finalRiskOutcome = "High risk";
+    finalThreatLikelihood = "High";
+    finalOutcomeReason = `High-risk employment deception detected: message demands recruitment fee or deposit ("${messageData.recruitmentFeeWarning.quotedText}") while directing to an unverified domain that does not belong to ${companyIdentity.claimedOrganization}.`;
+  } else if (messageData.recruitmentFeeWarning?.detected) {
     if (finalRiskOutcome === "Low observed risk" || finalRiskOutcome === "Unknown") {
       finalRiskOutcome = "Suspicious";
       finalThreatLikelihood = "Moderate";
@@ -307,6 +336,52 @@ export function enrichReportWithScamIntelligence(params: {
       finalRiskOutcome = "Suspicious";
       finalThreatLikelihood = "Moderate";
       finalOutcomeReason = `Destination domain (${companyIdentity.destinationHost}) does not belong to the claimed organization (${companyIdentity.claimedOrganization}).`;
+    }
+  } else if (
+    companyIdentity.isThirdPartyPlatform &&
+    jobVerification?.status &&
+    (jobVerification.status.includes("unverified") || jobVerification.status.includes("not found"))
+  ) {
+    if (finalRiskOutcome === "Low observed risk") {
+      finalRiskOutcome = "Unknown";
+      finalThreatLikelihood = "Uncertain";
+      finalOutcomeReason = `The destination is hosted on a recognized third-party platform (${companyIdentity.platformName || companyIdentity.destinationHost}), but the specific vacancy "${jobVerification.claimedRole || "unspecified"}" could not be confirmed in available page evidence.`;
+    }
+  }
+
+  // 7. Ensure complete evidence provenance on all findings
+  for (let i = 0; i < updatedEvidenceItems.length; i++) {
+    const f = updatedEvidenceItems[i];
+    if (!f.id) {
+      f.id = `finding-${i + 1}-${f.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    }
+    if (!f.evidenceNature) {
+      if (f.provenance === "policy_rule") {
+        f.evidenceNature = "derived_policy_rule";
+      } else if (f.provenance === "browser_observation" || f.provenance === "redirect_analysis" || f.provenance === "url_structure") {
+        f.evidenceNature = "direct_observation";
+      } else {
+        f.evidenceNature = "user_input_assertion";
+      }
+    }
+    if (!f.sourceType) {
+      f.sourceType =
+        f.provenance === "url_structure"
+          ? "submitted_url"
+          : f.provenance === "redirect_analysis"
+          ? "observed_destination"
+          : f.provenance === "policy_rule"
+          ? "heuristic_rule"
+          : "observed_destination";
+    }
+    if (!f.sourceUrl && (f.provenance === "browser_observation" || f.provenance === "redirect_analysis")) {
+      f.sourceUrl = report.observedDestination.finalUrl || report.originalUrl;
+    }
+    if (!f.observedAt && (f.provenance === "browser_observation" || f.provenance === "redirect_analysis")) {
+      f.observedAt = report.timestamp;
+    }
+    if (f.accessible === undefined && f.sourceUrl && (f.provenance === "browser_observation" || f.provenance === "redirect_analysis")) {
+      f.accessible = true;
     }
   }
 
@@ -335,7 +410,10 @@ export function createTextOnlyReport(params: {
 }): InvestigationReport {
   const { messageData, companyIdentity, jobVerification } = params;
   const now = new Date().toISOString();
-  const investigationId = `inv_text_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const randSuffix = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID().replace(/-/g, "").slice(0, 12)
+    : Math.random().toString(36).substring(2, 10);
+  const investigationId = `inv_text_${Date.now()}_${randSuffix}`;
 
   const evaluatedClaims = evaluateAllClaims({
     initialClaims: messageData.claims,

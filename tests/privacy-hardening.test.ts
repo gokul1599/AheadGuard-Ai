@@ -240,6 +240,97 @@ describe("Critical Privacy and Verification Accuracy Hardening", () => {
       expect(summary).not.toContain("987-65-4321");
       expect(summary).toContain("[CARD NUMBER REDACTED]");
     });
+
+    it("comprehensive sensitive query parameter audit: strips all candidate secret tokens while strictly preserving innocent parameters", () => {
+      const complexUrl =
+        "https://api.example.com/oauth/callback" +
+        "?keyword=cybersecurity" +
+        "&country_code=US" +
+        "&zip_code=10001" +
+        "&status_code=200" +
+        "&page=2" +
+        "&sort=asc" +
+        "&token=SECRET_TOKEN_VAL" +
+        "&access_token=SECRET_ACCESS_VAL" +
+        "&refresh_token=SECRET_REFRESH_VAL" +
+        "&id_token=SECRET_ID_VAL" +
+        "&auth_token=SECRET_AUTH_VAL" +
+        "&session_token=SECRET_SESS_VAL" +
+        "&sessionid=SECRET_SESSID_VAL" +
+        "&api_key=SECRET_APIKEY_VAL" +
+        "&client_secret=SECRET_CLIENT_VAL" +
+        "&private_key=SECRET_PRIVKEY_VAL" +
+        "&password=SECRET_PASS_VAL" +
+        "&passwd=SECRET_PASSWD_VAL" +
+        "&otp=123456" +
+        "&otp_code=654321" +
+        "&code=OAUTH_AUTH_CODE_VAL" +
+        "&state=CSRF_STATE_VAL" +
+        "&jwt=eyJhbGciOiJIUzI1NiJ9.abc.xyz" +
+        "&bearer=SECRET_BEARER_VAL" +
+        "&signature=SECRET_SIG_VAL" +
+        "&credentials=SECRET_CREDS_VAL";
+
+      const cleaned = sanitizeUrlForSharing(complexUrl);
+
+      // Innocent parameters MUST be preserved
+      expect(cleaned).toContain("keyword=cybersecurity");
+      expect(cleaned).toContain("country_code=US");
+      expect(cleaned).toContain("zip_code=10001");
+      expect(cleaned).toContain("status_code=200");
+      expect(cleaned).toContain("page=2");
+      expect(cleaned).toContain("sort=asc");
+
+      // All sensitive secret parameters MUST be stripped
+      expect(cleaned).not.toContain("SECRET_TOKEN_VAL");
+      expect(cleaned).not.toContain("SECRET_ACCESS_VAL");
+      expect(cleaned).not.toContain("SECRET_REFRESH_VAL");
+      expect(cleaned).not.toContain("SECRET_ID_VAL");
+      expect(cleaned).not.toContain("SECRET_AUTH_VAL");
+      expect(cleaned).not.toContain("SECRET_SESS_VAL");
+      expect(cleaned).not.toContain("SECRET_SESSID_VAL");
+      expect(cleaned).not.toContain("SECRET_APIKEY_VAL");
+      expect(cleaned).not.toContain("SECRET_CLIENT_VAL");
+      expect(cleaned).not.toContain("SECRET_PRIVKEY_VAL");
+      expect(cleaned).not.toContain("SECRET_PASS_VAL");
+      expect(cleaned).not.toContain("SECRET_PASSWD_VAL");
+      expect(cleaned).not.toContain("123456");
+      expect(cleaned).not.toContain("654321");
+      expect(cleaned).not.toContain("OAUTH_AUTH_CODE_VAL");
+      expect(cleaned).not.toContain("CSRF_STATE_VAL");
+      expect(cleaned).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+      expect(cleaned).not.toContain("SECRET_BEARER_VAL");
+      expect(cleaned).not.toContain("SECRET_SIG_VAL");
+      expect(cleaned).not.toContain("SECRET_CREDS_VAL");
+    });
+
+    it("handles mixed-case parameter names, duplicate sensitive keys, and authority credentials safely", () => {
+      const mixedCaseUrl =
+        "https://admin_user:my_secret_pass@secure.portal.org/login" +
+        "?Token=UPPERCASE_SECRET" +
+        "&API_KEY=KEY_SECRET_1" +
+        "&api-key=KEY_SECRET_2" +
+        "&Client-Secret=CLIENT_SECRET" +
+        "&user_password=PASS_SECRET" +
+        "&safe_context=production_login#access_token=FRAGMENT_SECRET";
+
+      const cleaned = sanitizeUrlForSharing(mixedCaseUrl);
+
+      // Authority credentials stripped
+      expect(cleaned).not.toContain("admin_user");
+      expect(cleaned).not.toContain("my_secret_pass");
+
+      // Mixed-case keys stripped
+      expect(cleaned).not.toContain("UPPERCASE_SECRET");
+      expect(cleaned).not.toContain("KEY_SECRET_1");
+      expect(cleaned).not.toContain("KEY_SECRET_2");
+      expect(cleaned).not.toContain("CLIENT_SECRET");
+      expect(cleaned).not.toContain("PASS_SECRET");
+      expect(cleaned).not.toContain("FRAGMENT_SECRET");
+
+      // Non-sensitive context preserved
+      expect(cleaned).toContain("safe_context=production_login");
+    });
   });
 
   describe("2. Job Listing Verification Accuracy", () => {

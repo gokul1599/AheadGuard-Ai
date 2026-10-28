@@ -2183,5 +2183,74 @@ describe("Benchmark Overhaul: False-Positive Elimination, Phishing Detection & P
     expect(report.warningSigns.length).toBeGreaterThan(0);
     expect(report.warningSigns).toContain("Unencrypted HTTP Connection");
   });
+
+  it("Scenario 14 (Severe Threat Crawler Precedence): Confirmed severe threat with crawler failure/termination preserves High risk", () => {
+    const url = new URL("https://login-microsoft-secure.attacker.com");
+    const severeThreatWithFailure: TinyFishExecutionResult = {
+      success: false,
+      goalFailed: true,
+      errorMessage: "Crawler navigation timed out after 30000ms",
+      eventsCount: 3,
+      rawAgentText: "Page attempted redirect to private internal metadata endpoint before timing out.",
+      structuredResult: {
+        page_title: "Microsoft Login Verification",
+        observed_final_url: "http://169.254.169.254/latest/meta-data/",
+        claimed_organization: "Microsoft",
+        visible_purpose: "Credential prompt",
+        credential_or_payment_request: true,
+        download_or_permission_request: false,
+        observed_warning_signs: ["Redirected to restricted internal IP address: 169.254.169.254"],
+        positive_signals: [],
+        checks_performed: ["Evaluated redirect chain"],
+        unknowns: ["Stream closed early"],
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult: severeThreatWithFailure });
+    // Precedence rule: Must be High risk, NOT downgraded to Unknown
+    expect(report.riskOutcome).toBe("High risk");
+    expect(report.threatLikelihood).toBe("High");
+    expect(report.limitations.some((l) => l.includes("severe threat indicators were confirmed prior to termination"))).toBe(true);
+  });
+
+  it("Scenario 15 (Observation Timestamp Truthfulness): Finding observedAt reflects crawler timestamp and is not fabricated", () => {
+    const url = new URL("https://example.com/test");
+    const crawlTime = "2026-10-28T01:00:00.000Z";
+    const resultWithTime: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 2,
+      rawAgentText: "Test page visited.",
+      observedAt: crawlTime,
+      structuredResult: {
+        page_title: "Test Page",
+        observed_final_url: "https://example.com/test",
+        visible_purpose: "Test",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["Valid HTTPS encryption"],
+        checks_performed: ["Visited page"],
+        unknowns: [],
+      },
+    };
+
+    const reportWithTime = assessInvestigation({ submittedUrl: url, tinyFishResult: resultWithTime });
+    const observationWithTime = reportWithTime.evidenceItems.find((e) => e.provenance === "browser_observation");
+    if (observationWithTime) {
+      expect(observationWithTime.observedAt).toBe(crawlTime);
+    }
+
+    const resultWithoutTime: TinyFishExecutionResult = {
+      ...resultWithTime,
+      observedAt: undefined,
+    };
+    const reportWithoutTime = assessInvestigation({ submittedUrl: url, tinyFishResult: resultWithoutTime });
+    const observationWithoutTime = reportWithoutTime.evidenceItems.find((e) => e.provenance === "browser_observation");
+    if (observationWithoutTime) {
+      // Must NOT be set to report generation timestamp
+      expect(observationWithoutTime.observedAt).toBeUndefined();
+    }
+  });
 });
 

@@ -10,51 +10,12 @@ import {
   isSameRegistrableDomain,
   matchesBrandAlias,
   isUserHostedPlatform,
+  RECOGNIZED_RECRUITMENT_PLATFORMS,
+  isRecruitmentPlatform,
 } from "./policy";
 import { validateAndNormalizeUrl } from "./url-safety";
 
-export const RECOGNIZED_RECRUITMENT_PLATFORMS: Record<
-  string,
-  { name: string; rootDomain: string; isHostingJobBoard: boolean }
-> = {
-  "greenhouse.io": { name: "Greenhouse", rootDomain: "greenhouse.io", isHostingJobBoard: true },
-  "lever.co": { name: "Lever", rootDomain: "lever.co", isHostingJobBoard: true },
-  "myworkdayjobs.com": { name: "Workday Jobs", rootDomain: "myworkdayjobs.com", isHostingJobBoard: true },
-  "smartrecruiters.com": { name: "SmartRecruiters", rootDomain: "smartrecruiters.com", isHostingJobBoard: true },
-  "ashbyhq.com": { name: "Ashby", rootDomain: "ashbyhq.com", isHostingJobBoard: true },
-  "workable.com": { name: "Workable", rootDomain: "workable.com", isHostingJobBoard: true },
-  "bamboohr.com": { name: "BambooHR", rootDomain: "bamboohr.com", isHostingJobBoard: true },
-  "linkedin.com": { name: "LinkedIn", rootDomain: "linkedin.com", isHostingJobBoard: true },
-  "indeed.com": { name: "Indeed", rootDomain: "indeed.com", isHostingJobBoard: true },
-  "wellfound.com": { name: "Wellfound (AngelList)", rootDomain: "wellfound.com", isHostingJobBoard: true },
-  "internshala.com": { name: "Internshala", rootDomain: "internshala.com", isHostingJobBoard: true },
-  "naukri.com": { name: "Naukri", rootDomain: "naukri.com", isHostingJobBoard: true },
-};
-
-/**
- * Checks if a given URL or hostname belongs to a recognized recruitment platform or job board.
- */
-export function isRecruitmentPlatform(urlOrHostname: string): { isPlatform: boolean; platformName?: string } {
-  if (!urlOrHostname) return { isPlatform: false };
-  let h = urlOrHostname.toLowerCase().trim();
-  try {
-    if (h.includes("://")) {
-      h = new URL(h).hostname.toLowerCase();
-    } else if (h.includes("/")) {
-      h = h.split("/")[0].toLowerCase();
-    }
-  } catch {
-    // Keep original string if URL parse fails
-  }
-
-  for (const [domain, meta] of Object.entries(RECOGNIZED_RECRUITMENT_PLATFORMS)) {
-    if (isDomainOrSubdomain(h, domain) || isSameRegistrableDomain(h, domain)) {
-      return { isPlatform: true, platformName: meta.name };
-    }
-  }
-
-  return { isPlatform: false };
-}
+export { RECOGNIZED_RECRUITMENT_PLATFORMS, isRecruitmentPlatform };
 
 /**
  * Finds a matching canonical brand entry from the registry given a claimed name.
@@ -317,9 +278,9 @@ export function verifyCompanyIdentity(params: {
       claimedOrganization: claimedOrg,
       destinationHost,
       registrableDomain,
-      status: "Identity mismatch",
+      status: "Unverified identity",
       explanation: claimedOrg
-        ? `The sender asserts identity as "${claimedOrg}", but the destination is a shared user-hosted platform (${destinationHost}). Anyone can publish content here without corporate verification.`
+        ? `The sender asserts identity as "${claimedOrg}", but the destination is hosted on a public user-generated hosting service (${destinationHost}). Content published here is not authenticated by an official enterprise domain.`
         : `Destination (${destinationHost}) is a shared hosting platform without verified corporate identity.`,
       isRegisteredBrand: false,
       isOfficialCorporateDomain: false,
@@ -405,10 +366,13 @@ export function matchesRoleText(claimedRole?: string, candidateText?: string): b
     "portal",
   ]);
 
+  // Valid two-letter domain/role acronyms that must not be discarded
+  const validTwoLetterTokens = new Set(["qa", "ui", "ux", "ai", "ml", "hr", "it", "qc", "pm"]);
+
   const tokens = roleClean
     .split(/[\s\-_/,\.:;]+/)
     .map((t) => t.trim().toLowerCase())
-    .filter((t) => t.length > 2 && !genericRecruitmentTerms.has(t));
+    .filter((t) => (t.length > 2 || validTwoLetterTokens.has(t)) && !genericRecruitmentTerms.has(t));
 
   // If claimedRole has NO specific substantive role keywords (e.g. user just said "Job" or "Internship"),
   // generic page titles or site headers must NOT falsely match it as a verified specific vacancy.

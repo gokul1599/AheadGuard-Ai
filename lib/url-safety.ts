@@ -1,3 +1,5 @@
+import { isSensitiveKey, containsSensitiveValue } from "./share-report";
+
 export interface UrlValidationSuccess {
   valid: true;
   url: URL;
@@ -114,8 +116,8 @@ export function isUnsafeDestination(hostname: string): { unsafe: boolean; reason
     }
   }
 
-  // Pure integer / dword IP bypass (e.g., 2130706433 = 127.0.0.1)
-  if (/^\d{8,10}$/.test(host)) {
+  // Pure integer / dword IP bypass (e.g., 2130706433 = 127.0.0.1, 0 = 0.0.0.0)
+  if (/^\d{1,10}$/.test(host)) {
     const num = Number(host);
     if (!Number.isNaN(num) && num >= 0 && num <= 4294967295) {
       const a = (num >>> 24) & 255;
@@ -142,8 +144,47 @@ export function isUnsafeDestination(hostname: string): { unsafe: boolean; reason
     }
   }
 
-  // Dotted decimal or octal/hex parts
+  // Dotted decimal or octal/hex parts (supports standard 4-part as well as 2-part and 3-part shorthand)
   const rawParts = host.split(".");
+  if (rawParts.length === 2) {
+    const p1 = Number(rawParts[0]);
+    const p2 = Number(rawParts[1]);
+    if (!Number.isNaN(p1) && !Number.isNaN(p2) && p1 >= 0 && p1 <= 255 && p2 >= 0 && p2 <= 16777215) {
+      const a = p1;
+      const b = (p2 >>> 16) & 255;
+      const c = (p2 >>> 8) & 255;
+      const d = p2 & 255;
+      if (isPrivateOrReservedIpv4(a, b, c, d)) {
+        return { unsafe: true, reason: "Two-part shorthand IP maps to a private or reserved network." };
+      }
+    }
+  }
+
+  if (rawParts.length === 3) {
+    const p1 = Number(rawParts[0]);
+    const p2 = Number(rawParts[1]);
+    const p3 = Number(rawParts[2]);
+    if (
+      !Number.isNaN(p1) &&
+      !Number.isNaN(p2) &&
+      !Number.isNaN(p3) &&
+      p1 >= 0 &&
+      p1 <= 255 &&
+      p2 >= 0 &&
+      p2 <= 255 &&
+      p3 >= 0 &&
+      p3 <= 65535
+    ) {
+      const a = p1;
+      const b = p2;
+      const c = (p3 >>> 8) & 255;
+      const d = p3 & 255;
+      if (isPrivateOrReservedIpv4(a, b, c, d)) {
+        return { unsafe: true, reason: "Three-part shorthand IP maps to a private or reserved network." };
+      }
+    }
+  }
+
   if (rawParts.length === 4) {
     const hasAlternate = rawParts.some(isAlternateEncoding);
     if (hasAlternate) {
@@ -208,6 +249,48 @@ export function validateAndNormalizeUrl(rawInput: string): UrlValidationResult {
   // Reject embedded credentials (phishing vector: http://user:pass@evil.com)
   if (parsed.username || parsed.password) {
     return { valid: false, error: "URLs containing embedded usernames or passwords are not permitted." };
+  }
+
+  // Pre-flight Privacy & Credential Defense: Never forward authentication tokens, session secrets, or passwords to external crawler
+  for (const key of Array.from(parsed.searchParams.keys())) {
+    const val = parsed.searchParams.get(key) || "";
+    if (isSensitiveKey(key) || containsSensitiveValue(val)) {
+      return {
+        valid: false,
+        error: "URLs containing sensitive authentication tokens, passwords, or credentials cannot be investigated to protect your privacy and security. Please remove sensitive credentials before submitting.",
+      };
+    }
+  }
+
+  // Reject URLs containing sensitive fragments (e.g. OAuth tokens in hash: #access_token=...)
+  if (parsed.hash) {
+    const hashContent = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
+    if (hashContent.includes("=") || hashContent.includes("&")) {
+      try {
+        const hashParams = new URLSearchParams(hashContent);
+        for (const key of Array.from(hashParams.keys())) {
+          const val = hashParams.get(key) || "";
+          if (isSensitiveKey(key) || containsSensitiveValue(val)) {
+            return {
+              valid: false,
+              error: "URLs containing sensitive authentication tokens or credentials in hash fragments cannot be investigated.",
+            };
+          }
+        }
+      } catch {
+        if (isSensitiveKey(hashContent) || containsSensitiveValue(hashContent)) {
+          return {
+            valid: false,
+            error: "URLs containing sensitive authentication tokens in hash fragments cannot be investigated.",
+          };
+        }
+      }
+    } else if (isSensitiveKey(hashContent) || containsSensitiveValue(hashContent)) {
+      return {
+        valid: false,
+        error: "URLs containing sensitive authentication tokens in hash fragments cannot be investigated.",
+      };
+    }
   }
 
   // Hostname validation

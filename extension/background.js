@@ -1,3 +1,154 @@
+// lib/share-report.ts
+var INNOCENT_PARAM_NAMES = /* @__PURE__ */ new Set([
+  "keyword",
+  "keywords",
+  "country_code",
+  "countrycode",
+  "country-code",
+  "zip_code",
+  "zipcode",
+  "zip-code",
+  "postal_code",
+  "postalcode",
+  "postal-code",
+  "language_code",
+  "lang_code",
+  "languagecode",
+  "area_code",
+  "areacode",
+  "currency_code",
+  "currencycode",
+  "status_code",
+  "statuscode",
+  "error_code",
+  "err_code",
+  "product_code",
+  "item_code",
+  "page",
+  "limit",
+  "offset",
+  "sort",
+  "order",
+  "filter",
+  "query",
+  "search",
+  "category",
+  "tag",
+  "tags",
+  "view",
+  "tab",
+  "lang",
+  "format"
+]);
+var EXACT_SENSITIVE_PARAM_NAMES = /* @__PURE__ */ new Set([
+  "token",
+  "tokens",
+  "access_token",
+  "access-token",
+  "accesstoken",
+  "refresh_token",
+  "refresh-token",
+  "refreshtoken",
+  "id_token",
+  "id-token",
+  "idtoken",
+  "auth_token",
+  "auth-token",
+  "authtoken",
+  "session_token",
+  "session-token",
+  "sessiontoken",
+  "session",
+  "session_id",
+  "session-id",
+  "sessionid",
+  "sess_id",
+  "sessid",
+  "key",
+  "api_key",
+  "api-key",
+  "apikey",
+  "secret_key",
+  "secret-key",
+  "secretkey",
+  "private_key",
+  "private-key",
+  "privatekey",
+  "app_key",
+  "app-key",
+  "appkey",
+  "secret",
+  "client_secret",
+  "client-secret",
+  "clientsecret",
+  "password",
+  "passwd",
+  "pwd",
+  "user_password",
+  "userpassword",
+  "otp",
+  "otp_code",
+  "otp-code",
+  "otpcode",
+  "totp",
+  "pin",
+  "pin_code",
+  "code",
+  // OAuth2 authorization code
+  "auth_code",
+  "auth-code",
+  "authcode",
+  "verification_code",
+  "verification-code",
+  "verificationcode",
+  "state",
+  // OAuth2 state token
+  "jwt",
+  "bearer",
+  "signature",
+  "sig",
+  "auth",
+  "authorization",
+  "credential",
+  "credentials",
+  "user_credentials",
+  "usercredentials",
+  "card_number",
+  "cardnumber",
+  "cvv",
+  "cvc",
+  "ssn",
+  "aadhaar",
+  "pan"
+]);
+function isSensitiveKey(key) {
+  if (!key || typeof key !== "string") return false;
+  const k = key.trim().toLowerCase();
+  if (INNOCENT_PARAM_NAMES.has(k)) {
+    return false;
+  }
+  if (EXACT_SENSITIVE_PARAM_NAMES.has(k)) {
+    return true;
+  }
+  const normalized = k.replace(/[\._\-]/g, "");
+  if (EXACT_SENSITIVE_PARAM_NAMES.has(normalized)) {
+    return true;
+  }
+  if (/(?:^|[_\-.])(token|secret|password|passwd|pwd|apikey|api_key|auth|session|credential|credentials|privkey|privatekey)(?:$|[_\-.])/i.test(k)) {
+    return true;
+  }
+  return false;
+}
+function containsSensitiveValue(value) {
+  if (!value || typeof value !== "string") return false;
+  if (/@\w+[\.\w+]+/.test(value)) return true;
+  if (/^eyJ[A-Za-z0-9_-]{10,}/.test(value)) return true;
+  if (/\b\d{12,19}\b/.test(value)) return true;
+  if (/^(?:sk_live|sk_test|pk_live|ghp_|tf_live|AIza|Bearer\s)/i.test(value)) return true;
+  if (/(?:password|passwd|api_key|apikey|secret|token|bearer)=/i.test(value)) return true;
+  return false;
+}
+
 // lib/url-safety.ts
 function extractUrlFromText(input) {
   if (!input || typeof input !== "string") return null;
@@ -58,7 +209,7 @@ function isUnsafeDestination(hostname) {
       }
     }
   }
-  if (/^\d{8,10}$/.test(host)) {
+  if (/^\d{1,10}$/.test(host)) {
     const num = Number(host);
     if (!Number.isNaN(num) && num >= 0 && num <= 4294967295) {
       const a = num >>> 24 & 255;
@@ -83,6 +234,33 @@ function isUnsafeDestination(hostname) {
     }
   }
   const rawParts = host.split(".");
+  if (rawParts.length === 2) {
+    const p1 = Number(rawParts[0]);
+    const p2 = Number(rawParts[1]);
+    if (!Number.isNaN(p1) && !Number.isNaN(p2) && p1 >= 0 && p1 <= 255 && p2 >= 0 && p2 <= 16777215) {
+      const a = p1;
+      const b = p2 >>> 16 & 255;
+      const c = p2 >>> 8 & 255;
+      const d = p2 & 255;
+      if (isPrivateOrReservedIpv4(a, b, c, d)) {
+        return { unsafe: true, reason: "Two-part shorthand IP maps to a private or reserved network." };
+      }
+    }
+  }
+  if (rawParts.length === 3) {
+    const p1 = Number(rawParts[0]);
+    const p2 = Number(rawParts[1]);
+    const p3 = Number(rawParts[2]);
+    if (!Number.isNaN(p1) && !Number.isNaN(p2) && !Number.isNaN(p3) && p1 >= 0 && p1 <= 255 && p2 >= 0 && p2 <= 255 && p3 >= 0 && p3 <= 65535) {
+      const a = p1;
+      const b = p2;
+      const c = p3 >>> 8 & 255;
+      const d = p3 & 255;
+      if (isPrivateOrReservedIpv4(a, b, c, d)) {
+        return { unsafe: true, reason: "Three-part shorthand IP maps to a private or reserved network." };
+      }
+    }
+  }
   if (rawParts.length === 4) {
     const hasAlternate = rawParts.some(isAlternateEncoding);
     if (hasAlternate) {
@@ -134,6 +312,44 @@ function validateAndNormalizeUrl(rawInput) {
   }
   if (parsed.username || parsed.password) {
     return { valid: false, error: "URLs containing embedded usernames or passwords are not permitted." };
+  }
+  for (const key of Array.from(parsed.searchParams.keys())) {
+    const val = parsed.searchParams.get(key) || "";
+    if (isSensitiveKey(key) || containsSensitiveValue(val)) {
+      return {
+        valid: false,
+        error: "URLs containing sensitive authentication tokens, passwords, or credentials cannot be investigated to protect your privacy and security. Please remove sensitive credentials before submitting."
+      };
+    }
+  }
+  if (parsed.hash) {
+    const hashContent = parsed.hash.startsWith("#") ? parsed.hash.slice(1) : parsed.hash;
+    if (hashContent.includes("=") || hashContent.includes("&")) {
+      try {
+        const hashParams = new URLSearchParams(hashContent);
+        for (const key of Array.from(hashParams.keys())) {
+          const val = hashParams.get(key) || "";
+          if (isSensitiveKey(key) || containsSensitiveValue(val)) {
+            return {
+              valid: false,
+              error: "URLs containing sensitive authentication tokens or credentials in hash fragments cannot be investigated."
+            };
+          }
+        }
+      } catch {
+        if (isSensitiveKey(hashContent) || containsSensitiveValue(hashContent)) {
+          return {
+            valid: false,
+            error: "URLs containing sensitive authentication tokens in hash fragments cannot be investigated."
+          };
+        }
+      }
+    } else if (isSensitiveKey(hashContent) || containsSensitiveValue(hashContent)) {
+      return {
+        valid: false,
+        error: "URLs containing sensitive authentication tokens in hash fragments cannot be investigated."
+      };
+    }
   }
   const host = parsed.hostname;
   if (!host || host.length > 253) {

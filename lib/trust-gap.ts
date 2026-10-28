@@ -64,7 +64,11 @@ export function calculateEvidenceCoverage(report: InvestigationReport): Evidence
   let coverageLevel: EvidenceCoverageStats["coverageLevel"] = "Sparse";
   if (report.riskOutcome === "Unknown") {
     coverageLevel = "Inconclusive";
-  } else if (totalClaims >= 3 && completedChecksCount >= 4) {
+  } else if (
+    totalClaims >= 3 &&
+    completedChecksCount >= 4 &&
+    (supportedCount + contradictedCount >= 2 || (unverifiedCount <= 1 && totalClaims >= 2))
+  ) {
     coverageLevel = "Comprehensive";
   } else if (totalClaims >= 1 || completedChecksCount >= 2) {
     coverageLevel = "Partial";
