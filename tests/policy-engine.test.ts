@@ -2252,5 +2252,65 @@ describe("Benchmark Overhaul: False-Positive Elimination, Phishing Detection & P
       expect(observationWithoutTime.observedAt).toBeUndefined();
     }
   });
+
+  it("Scaler Academy dashboard and login portal resolves to Low observed risk on verified official domain", () => {
+    const url = new URL("https://www.scaler.com/academy/mentee-dashboard/todos");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 8,
+      rawAgentText: JSON.stringify({
+        page_title: "Scaler Academy - Mentee Dashboard",
+        observed_final_url: "https://www.scaler.com/academy/mentee-dashboard/todos",
+        claimed_organization: "Scaler (InterviewBit Technologies Pte. Ltd.)",
+        visible_purpose: "Educational mentee dashboard and learning management portal",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "HTTPS enabled on the domain (scaler.com)",
+          "Official Scaler Academy domain (www.scaler.com)",
+          "Links to privacy policy and terms of use are present on the page",
+          "OAuth/social login redirects to the same domain (scaler.com)",
+          "Known educational technology brand (Scaler/InterviewBit)",
+        ],
+        checks_performed: ["Inspected sign-in form", "Verified domain certificate"],
+        unknowns: [],
+        overall_observation: "Official Scaler Academy learning portal with authentic sign-in form.",
+      }),
+      structuredResult: {
+        page_title: "Scaler Academy - Mentee Dashboard",
+        observed_final_url: "https://www.scaler.com/academy/mentee-dashboard/todos",
+        claimed_organization: "Scaler (InterviewBit Technologies Pte. Ltd.)",
+        visible_purpose: "Educational mentee dashboard and learning management portal",
+        credential_or_payment_request: true,
+        login_form_observed: true,
+        password_field_observed: true,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "HTTPS enabled on the domain (scaler.com)",
+          "Official Scaler Academy domain (www.scaler.com)",
+          "Links to privacy policy and terms of use are present on the page",
+          "OAuth/social login redirects to the same domain (scaler.com)",
+          "Known educational technology brand (Scaler/InterviewBit)",
+        ],
+        checks_performed: ["Inspected sign-in form", "Verified domain certificate"],
+        unknowns: [],
+        overall_observation: "Official Scaler Academy learning portal with authentic sign-in form.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Authentic Sign-in Form Observed")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
+  });
 });
 

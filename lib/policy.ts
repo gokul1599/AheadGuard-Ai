@@ -464,6 +464,48 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     approvedDomains: ["okta.com"],
     affiliatedAuthDomains: [],
   },
+  scaler: {
+    canonicalName: "Scaler",
+    aliases: [
+      "scaler",
+      "scaler academy",
+      "scaler by interviewbit",
+      "interviewbit",
+      "interviewbit technologies",
+      "interviewbit technologies pte. ltd.",
+      "interviewbit technologies pte ltd",
+    ],
+    approvedDomains: ["scaler.com", "interviewbit.com"],
+    affiliatedAuthDomains: ["scaler.com", "interviewbit.com"],
+    officialCareersUrl: "https://www.scaler.com/careers/",
+    officialContactUrl: "https://www.scaler.com/",
+  },
+  leetcode: {
+    canonicalName: "LeetCode",
+    aliases: ["leetcode", "leetcode inc"],
+    approvedDomains: ["leetcode.com"],
+    affiliatedAuthDomains: [],
+    officialCareersUrl: "https://leetcode.com/jobs/",
+  },
+  hackerrank: {
+    canonicalName: "HackerRank",
+    aliases: ["hackerrank", "hackerrank inc", "interviewstreet"],
+    approvedDomains: ["hackerrank.com"],
+    affiliatedAuthDomains: [],
+    officialCareersUrl: "https://www.hackerrank.com/careers/",
+  },
+  geeksforgeeks: {
+    canonicalName: "GeeksforGeeks",
+    aliases: ["geeksforgeeks", "gfg"],
+    approvedDomains: ["geeksforgeeks.org"],
+    affiliatedAuthDomains: [],
+  },
+  coursera: {
+    canonicalName: "Coursera",
+    aliases: ["coursera", "coursera inc"],
+    approvedDomains: ["coursera.org"],
+    affiliatedAuthDomains: [],
+  },
 };
 
 /**
