@@ -39,6 +39,11 @@ jobs:
       - name: Build Chrome Extension
         run: npm run build:extension
 
+      - name: Set up Chrome for Testing
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: "stable"
+
       - name: Run Chromium Extension E2E Acceptance Test
         run: xvfb-run --auto-servernum npm run test:extension:e2e -- --require-browser
 

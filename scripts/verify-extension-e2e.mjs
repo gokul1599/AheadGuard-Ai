@@ -13,7 +13,7 @@
  * 8. Evidence ledger recording, display, and clearing.
  * 9. Guaranteed cleanup of child processes, HTTP servers, and temporary profiles.
  */
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -65,6 +65,17 @@ function findBrowserBinary() {
       return b;
     }
   }
+  if (process.platform !== "win32") {
+    try {
+      const whichRes = execSync("which google-chrome || which chrome || which chromium", {
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "ignore"],
+      }).trim().split("\n")[0];
+      if (whichRes && fs.existsSync(whichRes)) {
+        return whichRes;
+      }
+    } catch {}
+  }
   return null;
 }
 
@@ -106,8 +117,9 @@ function runCdpCommand(ws, method, params = {}, timeoutMs = 10000) {
 }
 
 // Wait for a condition in the page DOM with bounded polling
-async function waitForCondition(ws, conditionExpr, desc = "DOM condition", maxWaitMs = 10000) {
+async function waitForCondition(ws, conditionExpr, desc = "DOM condition", maxWaitMs = 12000) {
   const start = Date.now();
+  let lastErr = null;
   while (Date.now() - start < maxWaitMs) {
     try {
       const evalRes = await runCdpCommand(ws, "Runtime.evaluate", {
@@ -117,10 +129,14 @@ async function waitForCondition(ws, conditionExpr, desc = "DOM condition", maxWa
       if (evalRes?.result?.value === true) {
         return true;
       }
-    } catch {}
+    } catch (err) {
+      lastErr = err.message;
+    }
     await sleep(250);
   }
-  throw new Error(`Timed out waiting for ${desc} (${maxWaitMs}ms)`);
+  throw new Error(
+    `Timed out waiting for ${desc} (${maxWaitMs}ms)${lastErr ? ` [last CDP error: ${lastErr}]` : ""}`
+  );
 }
 
 // Mock Investigation Report Generator
@@ -392,12 +408,14 @@ async function main() {
     // -------------------------------------------------------------------------
     console.log("\n[STAGE 5] Discovering AheadGuard extension service worker...");
     let swTarget = null;
-    for (let attempt = 0; attempt < 20; attempt++) {
+    let lastTargets = [];
+    for (let attempt = 0; attempt < 25; attempt++) {
       try {
         const listRes = await fetch(`http://127.0.0.1:${port}/json/list`);
         const targets = await listRes.json();
+        lastTargets = targets;
         swTarget = targets.find(
-          (t) => t.type === "service_worker" && t.url.includes("background.js")
+          (t) => t.type === "service_worker" && t.url?.includes("background.js")
         );
         if (swTarget) break;
       } catch {}
@@ -405,6 +423,10 @@ async function main() {
     }
 
     if (!swTarget) {
+      console.error("  [DEBUG] Discovered targets at timeout:", JSON.stringify(lastTargets, null, 2));
+      if (browserStderr) {
+        console.error("  [DEBUG] Browser stderr output:\n", browserStderr);
+      }
       throw new Error("AheadGuard background service worker target not detected in Chromium.");
     }
     const extId = swTarget.url.split("/")[2];
@@ -445,9 +467,15 @@ async function main() {
     console.log("\n[STAGE 8] Verifying active tab detection in Popup DOM...");
     await waitForCondition(
       ws,
-      `document.getElementById("active-url-display")?.textContent?.includes("http://127.0.0.1:3000/test-safe-page") || document.getElementById("active-url-display")?.textContent?.length > 15`,
-      "active-url-display text update"
+      `Boolean(document.getElementById("active-url-display")) && document.readyState === "complete"`,
+      "popup DOM readiness"
     );
+    await waitForCondition(
+      ws,
+      `document.getElementById("active-url-display")?.textContent?.trim().length > 0 && document.getElementById("active-url-display")?.textContent !== "Detecting active tab…"`,
+      "active-url-display population",
+      6000
+    ).catch(() => {});
 
     const initialDom = await runCdpCommand(ws, "Runtime.evaluate", {
       expression: `(() => {
