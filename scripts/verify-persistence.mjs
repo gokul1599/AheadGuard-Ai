@@ -642,10 +642,25 @@ export async function verifyProductionPersistence(options = {}) {
     }
 
     // Explicit Marker Verification in Retrieved Stored Report
+    // AheadGuard's PII redactor masks 10+ digit numeric sequences as potential phone numbers
+    // (e.g. replacing the Unix millisecond timestamp with '[PHONE REDACTED]').
+    // We check both the literal marker, the PII-redacted marker variant, and the 16-hex nonce.
     const messageExcerpt = retrievedReport.scamIntelligence?.messageExcerpt || "";
     const fullReportJson = JSON.stringify(retrievedReport);
+    const sanitizedMarkerVariant = marker.replace(
+      /aheadguard-persistence-probe-\d+-/,
+      "aheadguard-persistence-probe-[PHONE REDACTED]-"
+    );
+    const nonce = marker.split("-").pop() || "";
 
-    if (!messageExcerpt.includes(marker) && !fullReportJson.includes(marker)) {
+    const markerVerified =
+      messageExcerpt.includes(marker) ||
+      fullReportJson.includes(marker) ||
+      messageExcerpt.includes(sanitizedMarkerVariant) ||
+      fullReportJson.includes(sanitizedMarkerVariant) ||
+      (nonce.length === 16 && (messageExcerpt.includes(nonce) || fullReportJson.includes(nonce)));
+
+    if (!markerVerified) {
       return {
         success: false,
         optedIn: true,
