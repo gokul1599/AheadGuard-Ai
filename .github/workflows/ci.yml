@@ -40,11 +40,14 @@ jobs:
         run: npm run build:extension
 
       - name: Set up Chrome for Testing
+        id: setup-chrome
         uses: browser-actions/setup-chrome@v2
         with:
           chrome-version: "stable"
 
       - name: Run Chromium Extension E2E Acceptance Test
+        env:
+          CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
         run: xvfb-run --auto-servernum npm run test:extension:e2e -- --require-browser
 
       - name: Build Next.js application
