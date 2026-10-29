@@ -421,8 +421,12 @@ async function main() {
         const listRes = await fetch(`http://127.0.0.1:${port}/json/list`);
         const targets = await listRes.json();
         lastTargets = targets;
+        console.log(`  [Attempt ${attempt + 1}] Targets:`, targets.map((t) => ({ type: t.type, title: t.title, url: t.url })));
         swTarget = targets.find(
-          (t) => t.type === "service_worker" && t.url?.includes("background.js")
+          (t) =>
+            t.type === "service_worker" &&
+            t.url?.includes("background.js") &&
+            !t.url?.includes("glbjnfimcajjenihimblfaponejbkoph")
         );
         if (swTarget) break;
       } catch {}
