@@ -67,6 +67,16 @@ describe("Message Intelligence Engine", () => {
       expect(warning?.riskLevel).toBe("High");
     });
 
+    it("detects refundable registration fee demands with amount specified after fee name", () => {
+      const msg = "To confirm your interview slot, please pay a refundable registration fee of $50 via UPI to recruitment.team@okaxis.";
+      const warning = detectRecruitmentFee(msg);
+      expect(warning).toBeDefined();
+      expect(warning?.detected).toBe(true);
+      expect(warning?.feeType).toBe("application_fee");
+      expect(warning?.quotedText.toLowerCase()).toContain("registration fee");
+      expect(warning?.riskLevel).toBe("High");
+    });
+
     it("detects refundable security deposits", () => {
       const msg = "A refundable security deposit of $250 is required before laptop dispatch.";
       const warning = detectRecruitmentFee(msg);
@@ -101,6 +111,13 @@ describe("Message Intelligence Engine", () => {
       const risks = detectPaymentRisks(msg);
       expect(risks.some((r) => r.paymentType === "p2p_transfer")).toBe(true);
       expect(risks[0].quotedText).toContain("recruitment.team@okaxis");
+    });
+
+    it("detects UPI transfer instructions using 'via UPI to' phrasing", () => {
+      const msg = "Please pay a refundable fee of $50 via UPI to recruitment.team@okaxis to confirm your slot.";
+      const risks = detectPaymentRisks(msg);
+      expect(risks.some((r) => r.paymentType === "p2p_transfer")).toBe(true);
+      expect(risks.some((r) => r.claimedRecipient === "recruitment.team@okaxis")).toBe(true);
     });
 
     it("detects password requests in message text", () => {

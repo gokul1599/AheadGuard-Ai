@@ -470,8 +470,26 @@ function createUnknownReport(targetUrl, reason) {
 }
 async function investigateUrl(options) {
   const { url, backendUrl = DEFAULT_BACKEND_URL, onProgress, signal } = options;
-  const validation = validateAndNormalizeUrl(url);
-  if (!validation.valid) {
+  const rawInput = (url || "").trim();
+  const validation = validateAndNormalizeUrl(rawInput);
+  let requestBody;
+  if (validation.valid) {
+    const isLinkOnly = rawInput === validation.normalizedUrl || rawInput === validation.url.href || rawInput === validation.normalizedUrl.replace(/\/$/, "");
+    requestBody = {
+      input: validation.normalizedUrl,
+      messageText: isLinkOnly ? void 0 : rawInput,
+      analysisMode: isLinkOnly ? "link" : "message"
+    };
+  } else if (validation.error.includes("No http:// or https:// URL found")) {
+    if (rawInput.length < 4) {
+      throw new Error("Please enter a valid URL or message (minimum 4 characters).");
+    }
+    requestBody = {
+      input: rawInput,
+      messageText: rawInput,
+      analysisMode: "message"
+    };
+  } else {
     throw new Error(validation.error);
   }
   const endpoint = `${backendUrl.replace(/\/+$/, "")}/api/investigate`;
@@ -485,7 +503,7 @@ async function investigateUrl(options) {
         "Content-Type": "application/json",
         Accept: "text/event-stream, application/json"
       },
-      body: JSON.stringify({ input: validation.normalizedUrl }),
+      body: JSON.stringify(requestBody),
       signal: combinedSignal
     });
     const contentType = response.headers.get("content-type") || "";
@@ -549,7 +567,8 @@ async function investigateUrl(options) {
   } catch (error) {
     const isTimeout = combinedSignal.aborted;
     const cleanMsg = isTimeout ? "Investigation timed out. The destination could not be validated." : sanitizeClientMessage(error);
-    return createUnknownReport(validation.normalizedUrl, cleanMsg);
+    const fallbackTarget = validation.valid ? validation.normalizedUrl : rawInput;
+    return createUnknownReport(fallbackTarget, cleanMsg);
   }
 }
 

@@ -248,7 +248,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       evidenceList.appendChild(emptyDiv);
     }
     recText.textContent = report.recommendedAction;
-    const webUrl = `${currentBackendUrl.replace(/\/+$/, "")}/?url=${encodeURIComponent(report.originalUrl)}`;
+    const webUrl = report.originalUrl && report.originalUrl.startsWith("http") ? `${currentBackendUrl.replace(/\/+$/, "")}/?url=${encodeURIComponent(report.originalUrl)}` : `${currentBackendUrl.replace(/\/+$/, "")}/?id=${encodeURIComponent(report.investigationId)}`;
     viewFullReport.href = webUrl;
   }
   async function loadLedger() {

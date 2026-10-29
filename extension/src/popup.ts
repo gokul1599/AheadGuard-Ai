@@ -310,7 +310,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     recText.textContent = report.recommendedAction;
 
     // Full Report Link
-    const webUrl = `${currentBackendUrl.replace(/\/+$/, "")}/?url=${encodeURIComponent(report.originalUrl)}`;
+    const webUrl =
+      report.originalUrl && report.originalUrl.startsWith("http")
+        ? `${currentBackendUrl.replace(/\/+$/, "")}/?url=${encodeURIComponent(report.originalUrl)}`
+        : `${currentBackendUrl.replace(/\/+$/, "")}/?id=${encodeURIComponent(report.investigationId)}`;
     viewFullReport.href = webUrl;
   }
 

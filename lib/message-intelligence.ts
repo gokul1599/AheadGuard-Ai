@@ -266,7 +266,12 @@ export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | unde
   }> = [
     {
       type: "application_fee",
-      regex: /(?:pay|deposit|transfer|send)\s+(?:(?:an?|the|any)\s+)?(?:(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?)\s+)?(?:application|registration|processing|interview|portal|assessment)\s+fees?/i,
+      regex: /(?:pay|deposit|transfer|send|submit)\s+(?:(?:an?|the|any|a)\s+)?(?:(?:refundable|nominal|mandatory|one-time|advance|initial)\s+)?(?:(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?)\s+)?(?:application|registration|processing|interview|portal|assessment)\s+fees?(?:\s+(?:of\s+)?(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?))?/i,
+      explanation: "Legitimate employers never charge application or registration fees to evaluate candidates.",
+    },
+    {
+      type: "application_fee",
+      regex: /(?:(?:an?|the|any|a)\s+)?(?:refundable|nominal|mandatory|one-time|advance)?\s*(?:application|registration|processing|interview|portal|assessment)\s+fees?(?:\s+(?:of\s+)?(?:[$₹€£]\s*[0-9,.]+|[0-9,.]+\s*(?:rs|inr|usd)?))?\s+(?:is\s+)?(?:required|mandatory|must\s+be\s+paid|needed)/i,
       explanation: "Legitimate employers never charge application or registration fees to evaluate candidates.",
     },
     {
@@ -366,7 +371,8 @@ export function detectPaymentRisks(text: string, targetUrl?: string): PaymentRis
   }
 
   // 2. Personal P2P / UPI transfer requests
-  const p2pRegex = /(?:send\s+(?:money|funds|payment)\s+to|pay\s+via|transfer\s+to)\s+(?:gpay|phonepe|paytm|upi(?:\s+id)?|paypal|crypto|bitcoin|usdt|wire|western\s+union|account\s+number)\b[:\s]*([a-zA-Z0-9._\-@]+)/i;
+  const p2pRegex =
+    /(?:(?:send\s+(?:money|funds|payment)\s+to|pay\s+via|transfer\s+to)\s+(?:gpay|phonepe|paytm|upi(?:\s+id)?|paypal|crypto|bitcoin|usdt|wire|western\s+union|account\s+number)|via\s+(?:gpay|phonepe|paytm|upi(?:\s+id)?|paypal|crypto|bitcoin|usdt)\s+(?:to\s+)?)\b[:\s]*([a-zA-Z0-9._\-@]+)/i;
   const p2pMatch = text.match(p2pRegex);
   if (p2pMatch) {
     const handle = p2pMatch[1]?.trim();

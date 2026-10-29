@@ -87,6 +87,60 @@ describe("Claim Verification & Intelligence Sharing", () => {
       expect(report.scamIntelligence?.claims.length).toBeGreaterThan(0);
       expect(report.scamIntelligence?.independentVerificationRoutes.length).toBeGreaterThan(0);
     });
+
+    it("evaluates real-world text-only recruitment fee demand as Suspicious with fee and payment warnings", () => {
+      const msg = "Congratulations! You are shortlisted for Google Cloud Operations Lead. Salary is $12,000/month. To confirm your interview slot, please pay a refundable registration fee of $50 via UPI to recruitment.team@okaxis.";
+      const messageData = analyzeMessageText({ rawMessage: msg });
+      const companyIdentity = verifyCompanyIdentity({ claimedOrg: messageData.claimedOrganization });
+      const jobVerification = verifyJobListing({
+        claimedRole: messageData.claimedJobRole,
+        claimedEmployer: messageData.claimedOrganization,
+        companyIdentity,
+        feeWarningPresent: Boolean(messageData.recruitmentFeeWarning?.detected),
+      });
+
+      const report = createTextOnlyReport({
+        messageData,
+        companyIdentity,
+        jobVerification,
+      });
+
+      expect(report.riskOutcome).toBe("Suspicious");
+      expect(report.threatLikelihood).toBe("Moderate");
+      expect(report.scamIntelligence?.recruitmentFeeWarning?.detected).toBe(true);
+      expect(report.scamIntelligence?.recruitmentFeeWarning?.feeType).toBe("application_fee");
+      expect(report.scamIntelligence?.paymentRisks.some((r) => r.paymentType === "p2p_transfer")).toBe(true);
+      expect(report.warningSigns.some((w) => w.includes("Recruitment Fee Demanded"))).toBe(true);
+    });
+
+    it("verifies legitimate Amazon job offer with official careers link (amazon.jobs) without identity mismatch", () => {
+      const msg = "Amazon Talent Acquisition: We reviewed your profile for Senior Solutions Architect. Check the official requisition here: https://amazon.jobs";
+      const messageData = analyzeMessageText({ rawMessage: msg });
+      const companyIdentity = verifyCompanyIdentity({
+        claimedOrg: "Amazon",
+        destinationUrl: "https://amazon.jobs",
+      });
+      const jobVerification = verifyJobListing({
+        claimedRole: "Senior Solutions Architect",
+        claimedEmployer: "Amazon",
+        jobListingUrl: "https://amazon.jobs",
+        companyIdentity,
+        feeWarningPresent: false,
+      });
+
+      expect(companyIdentity.status).toBe("Official domain match");
+      expect(companyIdentity.isOfficialCorporateDomain).toBe(true);
+
+      const claims = evaluateAllClaims({
+        initialClaims: messageData.claims,
+        companyIdentity,
+        jobVerification,
+        targetUrl: "https://amazon.jobs",
+      });
+
+      const employerClaim = claims.find((c) => c.category === "employer_identity");
+      expect(employerClaim?.evaluation).toBe("Supported");
+    });
   });
 
   describe("Privacy-Safe Sharing & URL Sanitization", () => {

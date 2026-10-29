@@ -99,8 +99,30 @@ export async function investigateUrl(options: CheckOptions): Promise<Investigati
   const { url, backendUrl = DEFAULT_BACKEND_URL, onProgress, signal } = options;
 
   // 1. Client-side URL & Network Safety check
-  const validation = validateAndNormalizeUrl(url);
-  if (!validation.valid) {
+  const rawInput = (url || "").trim();
+  const validation = validateAndNormalizeUrl(rawInput);
+  let requestBody: Record<string, unknown>;
+
+  if (validation.valid) {
+    const isLinkOnly =
+      rawInput === validation.normalizedUrl ||
+      rawInput === validation.url.href ||
+      rawInput === validation.normalizedUrl.replace(/\/$/, "");
+    requestBody = {
+      input: validation.normalizedUrl,
+      messageText: isLinkOnly ? undefined : rawInput,
+      analysisMode: isLinkOnly ? "link" : "message",
+    };
+  } else if (validation.error.includes("No http:// or https:// URL found")) {
+    if (rawInput.length < 4) {
+      throw new Error("Please enter a valid URL or message (minimum 4 characters).");
+    }
+    requestBody = {
+      input: rawInput,
+      messageText: rawInput,
+      analysisMode: "message",
+    };
+  } else {
     throw new Error(validation.error);
   }
 
@@ -117,7 +139,7 @@ export async function investigateUrl(options: CheckOptions): Promise<Investigati
         "Content-Type": "application/json",
         Accept: "text/event-stream, application/json",
       },
-      body: JSON.stringify({ input: validation.normalizedUrl }),
+      body: JSON.stringify(requestBody),
       signal: combinedSignal,
     });
 
@@ -201,6 +223,7 @@ export async function investigateUrl(options: CheckOptions): Promise<Investigati
       : sanitizeClientMessage(error);
 
     // Never return a fabricated safe report on failure; return a defensive Unknown report
-    return createUnknownReport(validation.normalizedUrl, cleanMsg);
+    const fallbackTarget = validation.valid ? validation.normalizedUrl : rawInput;
+    return createUnknownReport(fallbackTarget, cleanMsg);
   }
 }

@@ -54,6 +54,93 @@ describe("AheadGuard Chrome Extension Test Suite (Section 11: Tests 1 - 20)", ()
     expect(report.riskOutcome).toBe("Low observed risk");
   });
 
+  // Test 1b: Pure text message submission (no URL) sends message payload
+  it("Test 1b: Pure text message submission sends analysisMode message and returns text report", async () => {
+    const mockTextReport: Partial<InvestigationReport> = {
+      investigationId: "inv_text_67890",
+      riskOutcome: "Suspicious",
+      originalUrl: "text://message-analysis",
+      outcomeReason: "Message requests sensitive credentials or direct payments.",
+      observedDestination: {
+        submittedUrl: "text://message-analysis",
+        normalizedUrl: "text://message-analysis",
+        submittedHost: "message-text",
+        destinationChanged: false,
+        redirectChain: [],
+      },
+      evidenceItems: [],
+      checksPerformed: [],
+      actionPreview: {
+        proposedAction: "Reviewing message text.",
+        consequenceIfProceed: "Caution required.",
+        riskFactors: [],
+      },
+    };
+
+    let capturedPayload: Record<string, unknown> | undefined;
+    global.fetch = vi.fn().mockImplementation(async (_url, init) => {
+      capturedPayload = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ report: mockTextReport }),
+      };
+    });
+
+    const report = await investigateUrl({
+      url: "Congratulations! You are selected for Senior Architect. Please pay $50 registration fee via UPI.",
+      backendUrl: "http://localhost:3000",
+    });
+
+    expect(report.investigationId).toBe("inv_text_67890");
+    expect(report.riskOutcome).toBe("Suspicious");
+    expect(capturedPayload?.analysisMode).toBe("message");
+    expect(capturedPayload?.input).toContain("Congratulations!");
+    expect(capturedPayload?.messageText).toContain("registration fee");
+  });
+
+  // Test 1c: Message containing a URL preserves both extracted destination and full message context
+  it("Test 1c: Message with URL validates destination and forwards full message text for scam intelligence", async () => {
+    let capturedPayload: Record<string, unknown> | undefined;
+    global.fetch = vi.fn().mockImplementation(async (_url, init) => {
+      capturedPayload = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          report: {
+            investigationId: "inv_combo_111",
+            riskOutcome: "Suspicious",
+            originalUrl: "https://scam-job-portal.online",
+            outcomeReason: "Recruitment fee requested.",
+            observedDestination: {
+              submittedUrl: "https://scam-job-portal.online",
+              normalizedUrl: "https://scam-job-portal.online/",
+              submittedHost: "scam-job-portal.online",
+              destinationChanged: false,
+              redirectChain: [],
+            },
+            evidenceItems: [],
+            checksPerformed: [],
+            actionPreview: { proposedAction: "Navigating", consequenceIfProceed: "Risk", riskFactors: [] },
+          },
+        }),
+      };
+    });
+
+    const report = await investigateUrl({
+      url: "Netflix Hiring: Selected! Pay $150 deposit at https://scam-job-portal.online to receive laptop.",
+      backendUrl: "http://localhost:3000",
+    });
+
+    expect(report.investigationId).toBe("inv_combo_111");
+    expect(capturedPayload?.analysisMode).toBe("message");
+    expect(capturedPayload?.input).toBe("https://scam-job-portal.online/");
+    expect(capturedPayload?.messageText).toContain("Netflix Hiring");
+  });
+
   // Test 2: Unsupported URL rejection
   it("Test 2: Unsupported URL schemes (chrome://, file://, about:) are rejected before making network calls", async () => {
     const unsupported = [

@@ -150,6 +150,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     aliases: ["amazon", "amazon.com", "amazon inc"],
     approvedDomains: [
       "amazon.com",
+      "amazon.jobs",
       "amazon.co.uk",
       "amazon.de",
       "amazon.co.jp",
@@ -165,7 +166,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   paypal: {
     canonicalName: "PayPal",
     aliases: ["paypal", "paypal inc"],
-    approvedDomains: ["paypal.com"],
+    approvedDomains: ["paypal.com", "pypl.com"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://careers.pypl.com/",
     officialContactUrl: "https://www.paypal.com/smarthelp/contact-us",
@@ -173,14 +174,14 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   meta: {
     canonicalName: "Meta",
     aliases: ["meta", "meta platforms", "facebook", "instagram", "whatsapp"],
-    approvedDomains: ["meta.com", "facebook.com", "instagram.com", "whatsapp.com", "fb.com"],
+    approvedDomains: ["meta.com", "facebook.com", "instagram.com", "whatsapp.com", "fb.com", "metacareers.com"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://www.metacareers.com/",
   },
   netflix: {
     canonicalName: "Netflix",
     aliases: ["netflix", "netflix inc"],
-    approvedDomains: ["netflix.com"],
+    approvedDomains: ["netflix.com", "netflix.net"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://jobs.netflix.com/",
   },
@@ -223,7 +224,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   capitalone: {
     canonicalName: "Capital One",
     aliases: ["capital one", "capitalone", "capital one bank", "capital one financial"],
-    approvedDomains: ["capitalone.com"],
+    approvedDomains: ["capitalone.com", "capitalonecareers.com"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://www.capitalonecareers.com/",
     officialContactUrl: "https://www.capitalone.com/contact/",
@@ -259,7 +260,7 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
   wise: {
     canonicalName: "Wise",
     aliases: ["wise", "transferwise", "wise payments"],
-    approvedDomains: ["wise.com"],
+    approvedDomains: ["wise.com", "wise.jobs"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://wise.jobs/",
     officialContactUrl: "https://wise.com/help",
@@ -685,10 +686,18 @@ export function detectLookalikeBrandInHostname(
     }
   }
 
-  // Also check all BRAND_DOMAIN_REGISTRY approved domains
+  // Also check all BRAND_DOMAIN_REGISTRY approved domains and official careers URLs
   for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
     if (entry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d))) {
       return { isLookalike: false };
+    }
+    if (entry.officialCareersUrl) {
+      try {
+        const cu = new URL(entry.officialCareersUrl);
+        if (isDomainOrSubdomain(h, cu.hostname) || isSameRegistrableDomain(h, cu.hostname)) {
+          return { isLookalike: false };
+        }
+      } catch {}
     }
   }
 
@@ -698,8 +707,22 @@ export function detectLookalikeBrandInHostname(
 
   for (const [canonicalBrandKey, tokens] of Object.entries(HIGH_VALUE_BRAND_TOKENS)) {
     const regEntry = BRAND_DOMAIN_REGISTRY[canonicalBrandKey];
-    if (regEntry && regEntry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d))) {
-      continue;
+    if (regEntry) {
+      const isApprovedOrCareers =
+        regEntry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d)) ||
+        (regEntry.officialCareersUrl
+          ? (() => {
+              try {
+                const cu = new URL(regEntry.officialCareersUrl);
+                return isDomainOrSubdomain(h, cu.hostname) || isSameRegistrableDomain(h, cu.hostname);
+              } catch {
+                return false;
+              }
+            })()
+          : false);
+      if (isApprovedOrCareers) {
+        continue;
+      }
     }
 
     for (const label of checkLabels) {
@@ -780,6 +803,9 @@ export const RECOGNIZED_RECRUITMENT_PLATFORMS: Record<
   "wellfound.com": { name: "Wellfound (AngelList)", rootDomain: "wellfound.com", isHostingJobBoard: true },
   "internshala.com": { name: "Internshala", rootDomain: "internshala.com", isHostingJobBoard: true },
   "naukri.com": { name: "Naukri", rootDomain: "naukri.com", isHostingJobBoard: true },
+  "icims.com": { name: "iCIMS", rootDomain: "icims.com", isHostingJobBoard: true },
+  "jobvite.com": { name: "Jobvite", rootDomain: "jobvite.com", isHostingJobBoard: true },
+  "breezy.hr": { name: "Breezy HR", rootDomain: "breezy.hr", isHostingJobBoard: true },
 };
 
 /**
@@ -1012,9 +1038,22 @@ export function evaluateBrandAffiliation(
     };
   }
 
-  // Brand is in registry. Check if hostname matches any approved domain or affiliated domain
-  const isOfficial = matchedEntry.approvedDomains.some((d) => isDomainOrSubdomain(hostname, d));
-  const isAffiliated = (matchedEntry.affiliatedAuthDomains || []).some((d) => isDomainOrSubdomain(hostname, d));
+  // Brand is in registry. Check if hostname matches any approved domain, affiliated domain, or official careers URL
+  let isOfficial = matchedEntry.approvedDomains.some(
+    (d) => isDomainOrSubdomain(hostname, d) || isSameRegistrableDomain(hostname, d)
+  );
+  const isAffiliated = (matchedEntry.affiliatedAuthDomains || []).some(
+    (d) => isDomainOrSubdomain(hostname, d) || isSameRegistrableDomain(hostname, d)
+  );
+
+  if (!isOfficial && matchedEntry.officialCareersUrl) {
+    try {
+      const cu = new URL(matchedEntry.officialCareersUrl);
+      if (isDomainOrSubdomain(hostname, cu.hostname) || isSameRegistrableDomain(hostname, cu.hostname)) {
+        isOfficial = true;
+      }
+    } catch {}
+  }
 
   if (isOfficial || isAffiliated) {
     return {

@@ -198,10 +198,19 @@ export function verifyCompanyIdentity(params: {
       snippet: `Approved corporate domains: ${matchedBrand.approvedDomains.join(", ")}`,
     });
 
-    // Check if destination host matches official corporate domains
-    const isOfficial = matchedBrand.approvedDomains.some(
+    // Check if destination host matches official corporate domains or official careers portal
+    let isOfficial = matchedBrand.approvedDomains.some(
       (d) => isDomainOrSubdomain(destinationHost!, d) || isSameRegistrableDomain(destinationHost!, d)
     );
+
+    if (!isOfficial && matchedBrand.officialCareersUrl) {
+      try {
+        const cu = new URL(matchedBrand.officialCareersUrl);
+        if (isDomainOrSubdomain(destinationHost!, cu.hostname) || isSameRegistrableDomain(destinationHost!, cu.hostname)) {
+          isOfficial = true;
+        }
+      } catch {}
+    }
 
     if (isOfficial) {
       return {

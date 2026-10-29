@@ -38,6 +38,28 @@ describe("Company Identity & Job Verification Engine", () => {
       expect(result.explanation).toContain("google.com");
     });
 
+    it("recognizes Official Domain Match for Amazon official careers site (amazon.jobs)", () => {
+      const result = verifyCompanyIdentity({
+        claimedOrg: "Amazon",
+        destinationUrl: "https://amazon.jobs/en/jobs/2501234/senior-solutions-architect",
+      });
+
+      expect(result.status).toBe("Official domain match");
+      expect(result.isOfficialCorporateDomain).toBe(true);
+      expect(result.officialDomains).toContain("amazon.jobs");
+    });
+
+    it("recognizes Official Domain Match for Meta Careers (metacareers.com)", () => {
+      const result = verifyCompanyIdentity({
+        claimedOrg: "Meta",
+        destinationUrl: "https://www.metacareers.com/jobs/12345",
+      });
+
+      expect(result.status).toBe("Official domain match");
+      expect(result.isOfficialCorporateDomain).toBe(true);
+      expect(result.officialDomains).toContain("metacareers.com");
+    });
+
     it("recognizes Third-Party Platform when claimed brand is hosted on an ATS", () => {
       const result = verifyCompanyIdentity({
         claimedOrg: "Google",
