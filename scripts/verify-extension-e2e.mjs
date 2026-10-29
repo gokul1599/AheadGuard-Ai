@@ -135,7 +135,7 @@ async function waitForCondition(ws, conditionExpr, desc = "DOM condition", maxWa
     await sleep(250);
   }
   const debugInfo = await runCdpCommand(ws, "Runtime.evaluate", {
-    expression: `JSON.stringify({ href: window.location.href, readyState: document.readyState, title: document.title, hasElement: Boolean(document.getElementById("active-url-display")) })`,
+    expression: `JSON.stringify({ href: window.location.href, readyState: document.readyState, title: document.title, hasElement: Boolean(document.getElementById("active-url-display")), innerText: document.body?.innerText?.slice(0, 500) })`,
     returnByValue: true,
   }).catch(() => null);
   if (debugInfo?.result?.value) {
@@ -467,11 +467,10 @@ async function main() {
     console.log("  ✓ WebSocket connected to popup DevTools target.");
     await runCdpCommand(ws, "Page.enable");
     await runCdpCommand(ws, "Runtime.enable");
-    if (!popupTab.url || popupTab.url === "about:blank" || popupTab.url !== popupUrl) {
-      console.log(`  Navigating popup target to ${popupUrl}...`);
-      await runCdpCommand(ws, "Page.navigate", { url: popupUrl });
-    }
-    await sleep(800);
+    console.log(`  Navigating popup target to ${popupUrl}...`);
+    const navResult = await runCdpCommand(ws, "Page.navigate", { url: popupUrl });
+    console.log(`  ✓ Page.navigate result:`, JSON.stringify(navResult));
+    await sleep(1000);
 
     // -------------------------------------------------------------------------
     // STAGE 8: Verify Active Tab Detection & Initial Popup State
