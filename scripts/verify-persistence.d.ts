@@ -2,6 +2,8 @@ export interface PersistenceVerificationOptions {
   baseUrl?: string;
   adminKey?: string;
   confirmOptIn?: boolean;
+  isProd?: boolean;
+  allowedOrigins?: string[];
   timeoutMs?: number;
   fetchFn?: typeof fetch;
   logger?: {
@@ -23,12 +25,16 @@ export interface PersistenceVerificationResult {
     authGetStatus?: number;
     storageMode?: string;
     persisted?: boolean;
+    markerVerified?: boolean;
   };
 }
 
+export const CANONICAL_PRODUCTION_ORIGIN: string;
 export function generatePersistenceMarker(): string;
 export function buildHarmlessPersistencePayload(marker: string): { input: string; analysisMode: string };
+export function isLoopbackOrigin(url: URL): boolean;
+export function validateTargetOrigin(rawUrl?: string, isProdMode?: boolean, allowedOrigins?: string[]): { valid: boolean; origin?: string; error?: string };
 export function sanitizeSecrets(text: string, secrets?: string[]): string;
-export function safeParseJsonResponse(response: Response, stepName: string, secrets?: string[]): Promise<unknown>;
+export function parseJsonResponse(bodyText: string, status: number, stepName: string): unknown;
 export function verifyProductionPersistence(options?: PersistenceVerificationOptions): Promise<PersistenceVerificationResult>;
 export function runCli(argv?: string[]): Promise<number>;

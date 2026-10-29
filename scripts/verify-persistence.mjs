@@ -1,25 +1,43 @@
 #!/usr/bin/env node
 
 /**
- * AheadGuard AI — Production Persistence Verification Probe
+ * AheadGuard AI — Hardened Production Persistence Verification Probe
  *
  * Dedicated opt-in verification script for end-to-end database persistence.
  *
- * Requirements enforced:
- * 1. Explicit operator opt-in required (RUN_LIVE_PERSISTENCE_TEST=true or --confirm-live-persistence).
- * 2. Deliberate target selection (--prod or explicit --url).
- * 3. Harmless text-only payload containing NO URLs (ensures zero TinyFish provider charges).
- * 4. Unique, searchable marker in payload for audit trail verification.
- * 5. Requires POST response to confirm report.investigationId, report.persisted === true, and report.storageMode === "persisted".
- * 6. Security check: Verifies unauthenticated GET /api/investigate?id=<id> returns HTTP 401 Unauthorized.
- * 7. Authorized retrieval: Verifies GET /api/investigate?id=<id> with Authorization: Bearer <key> returns HTTP 200 with matching ID.
- * 8. Never leaks secrets, tokens, connection strings, or headers in errors or logs.
- * 9. Does NOT invent record deletion endpoints (ledger immutability preserved).
- * 10. Bounded request timeouts with safe error redaction.
+ * Security & Reliability Controls Enforced:
+ * 1. Strict Target-Origin Authorization:
+ *    - Production mode strictly targets the canonical origin: https://aheadguard-ai.vercel.app
+ *    - Conflicting --url with --prod is rejected.
+ *    - Custom targets require explicit allowlisting (--allow-origin).
+ *    - Plain HTTP rejected for non-loopback destinations.
+ *    - URL userinfo (embedded credentials) strictly rejected.
+ * 2. Credential Security:
+ *    - Credential-bearing CLI arguments (--key) are completely removed.
+ *    - Admin secret must be supplied via AHEADGUARD_ADMIN_KEY environment variable.
+ *    - Production key is never transmitted to unapproved/custom origins.
+ *    - Zero secret leakage in logs, errors, or stack traces.
+ * 3. Safe Information Handling:
+ *    - Raw input URLs, query tokens, and upstream error bodies are never echoed.
+ * 4. Cross-Origin Redirect Protection:
+ *    - Network requests reject unexpected redirects (redirect: "error").
+ * 5. Complete Lifecycle Timeouts:
+ *    - Deadline covers the full request and response body consumption.
+ * 6. End-to-End Persistence & Marker Verification:
+ *    - Text-only probe without URLs (zero TinyFish crawler cost).
+ *    - Real investigationId, persisted === true, storageMode === "persisted" required.
+ *    - Unauthenticated GET /api/investigate?id=<id> must be rejected with HTTP 401.
+ *    - Authenticated GET with Bearer token must succeed (HTTP 200).
+ *    - Record ID must match.
+ *    - Exact unique marker must be verified inside the retrieved stored record.
+ * 7. Immutable Audit Ledger Preservation:
+ *    - No public record deletion endpoint invented.
  */
 
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+
+export const CANONICAL_PRODUCTION_ORIGIN = "https://aheadguard-ai.vercel.app";
 
 /**
  * Generates a unique, searchable persistence probe marker.
@@ -43,56 +61,199 @@ export function buildHarmlessPersistencePayload(marker) {
 }
 
 /**
+ * Determines whether a given URL points to a local loopback interface.
+ */
+export function isLoopbackOrigin(url) {
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname.endsWith(".localhost")
+  );
+}
+
+/**
+ * Strictly validates and normalizes the target origin.
+ *
+ * @param {string} rawUrl - Target URL string
+ * @param {boolean} [isProdMode=false] - Whether --prod mode is explicitly selected
+ * @param {string[]} [allowedOrigins=[]] - Custom allowed origins list
+ * @returns {{ valid: boolean; origin?: string; error?: string }}
+ */
+export function validateTargetOrigin(rawUrl, isProdMode = false, allowedOrigins = []) {
+  if (!rawUrl || typeof rawUrl !== "string" || rawUrl.trim().length === 0) {
+    return {
+      valid: false,
+      error: "Target URL required. Specify --prod to target canonical production origin or supply an approved URL.",
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = new URL(rawUrl.trim());
+  } catch {
+    return {
+      valid: false,
+      error: "Invalid verification target URL. Supply an approved HTTPS origin.",
+    };
+  }
+
+  // Reject URL userinfo (embedded username/password)
+  if (parsed.username || parsed.password) {
+    return {
+      valid: false,
+      error: "Invalid verification target URL: embedded credentials (userinfo) are rejected for security.",
+    };
+  }
+
+  // Reject unexpected schemes
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    return {
+      valid: false,
+      error: "Invalid verification target URL: scheme must be https (or http for permitted local loopback development).",
+    };
+  }
+
+  const origin = parsed.origin.toLowerCase();
+
+  // In production mode, target MUST be canonical production origin
+  if (isProdMode) {
+    if (origin !== CANONICAL_PRODUCTION_ORIGIN.toLowerCase()) {
+      return {
+        valid: false,
+        error: "Target origin rejected: production mode strictly permits only canonical origin https://aheadguard-ai.vercel.app.",
+      };
+    }
+    return { valid: true, origin: CANONICAL_PRODUCTION_ORIGIN };
+  }
+
+  // If targeting canonical production origin without explicit --prod, normalize to canonical
+  if (origin === CANONICAL_PRODUCTION_ORIGIN.toLowerCase()) {
+    return { valid: true, origin: CANONICAL_PRODUCTION_ORIGIN };
+  }
+
+  // Reject plain HTTP for any non-loopback destination
+  if (parsed.protocol === "http:" && !isLoopbackOrigin(parsed)) {
+    return {
+      valid: false,
+      error: "Invalid verification target URL: HTTP is only permitted for local loopback development (localhost / 127.0.0.1).",
+    };
+  }
+
+  // Loopback origins are allowed for development/testing
+  if (isLoopbackOrigin(parsed)) {
+    return { valid: true, origin: parsed.origin };
+  }
+
+  // Check custom allowed origins list
+  const normalizedAllowlist = allowedOrigins.map((o) => {
+    try {
+      return new URL(o).origin.toLowerCase();
+    } catch {
+      return typeof o === "string" ? o.toLowerCase() : "";
+    }
+  });
+
+  if (normalizedAllowlist.includes(origin)) {
+    return { valid: true, origin: parsed.origin };
+  }
+
+  return {
+    valid: false,
+    error: "Target origin rejected: custom destination is not in the approved origin allowlist.",
+  };
+}
+
+/**
  * Redacts known and heuristic secrets from text, error messages, and log strings.
  */
 export function sanitizeSecrets(text, secrets = []) {
-  if (!text || typeof text !== "string") {
+  if (typeof text !== "string") {
     return "";
   }
   let sanitized = text;
 
-  // Redact explicit secrets passed in
-  for (const secret of secrets) {
-    if (secret && typeof secret === "string" && secret.trim().length > 0) {
-      sanitized = sanitized.replaceAll(secret, "[REDACTED]");
+  try {
+    // Redact explicit secrets passed in
+    for (const secret of secrets) {
+      if (typeof secret === "string" && secret.trim().length > 0) {
+        sanitized = sanitized.replaceAll(secret, "[REDACTED]");
+      }
     }
+
+    // Redact Bearer tokens
+    sanitized = sanitized.replace(/Bearer\s+[a-zA-Z0-9_\-.~+/]+=*/gi, "Bearer [REDACTED]");
+
+    // Redact database connection strings
+    sanitized = sanitized.replace(/postgres(?:ql)?:\/\/[^\s"'<>]+/gi, "postgres://[REDACTED]");
+
+    // Redact userinfo embedded in URLs
+    sanitized = sanitized.replace(/:\/\/([^@\s"']+):([^@\s"']+)@/g, "://[REDACTED]:[REDACTED]@");
+
+    // Redact generic key/secret/token patterns
+    sanitized = sanitized.replace(
+      /(?:tf_|api[-_]?key|key|secret|token|password|admin[-_]?key)[=:\s]+[A-Za-z0-9_\-.]{8,}/gi,
+      "[REDACTED]"
+    );
+
+    // Strip stack trace paths that might leak username or directory structure
+    sanitized = sanitized.replace(/\bat\s+.*?(?:\.ts|\.js|\.mjs|\.cjs)(?::\d+:\d+)?/gi, "");
+  } catch {
+    return "[SANITIZATION_ERROR_REDACTED]";
   }
 
-  // Redact Bearer tokens, PostgreSQL connection URLs, and common secret keys
-  sanitized = sanitized
-    .replace(/Bearer\s+[a-zA-Z0-9_\-.~+/]+=*/gi, "Bearer [REDACTED]")
-    .replace(/postgres(?:ql)?:\/\/[^\s"']+/gi, "postgres://[REDACTED]")
-    .replace(/(?:tf_|api[-_]?key|key|secret|token|password)[=:\s]+[A-Za-z0-9_\-.]{8,}/gi, "$1=[REDACTED]")
-    .replace(/\bat\s+.*?(?:\.ts|\.js|\.mjs|\.cjs)(?::\d+:\d+)?/gi, "")
-    .trim();
-
-  return sanitized;
+  return sanitized.trim();
 }
 
 /**
- * Safely parses a response body as JSON with error containment and secret redaction.
+ * Safely parses a response body string as JSON with error containment and zero raw-body leakage.
  */
-export async function safeParseJsonResponse(response, stepName, secrets = []) {
-  let rawText = "";
+export function parseJsonResponse(bodyText, status, stepName) {
   try {
-    rawText = await response.text();
-  } catch (err) {
-    const rawMsg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      sanitizeSecrets(`Failed to read response body during ${stepName}: ${rawMsg}`, secrets)
-    );
+    return JSON.parse(bodyText);
+  } catch {
+    throw new Error(`${stepName} returned non-JSON payload (HTTP ${status}).`);
   }
+}
+
+/**
+ * Executes a network request where timeout covers both fetch and response body reading,
+ * and unexpected redirects are rejected.
+ */
+async function executeBoundedRequest(url, fetchOptions, stepName, timeoutMs, fetchFn, secrets) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort(new Error(`Timeout after ${timeoutMs}ms`));
+  }, timeoutMs);
 
   try {
-    return JSON.parse(rawText);
-  } catch {
-    const snippet = rawText.length > 120 ? `${rawText.substring(0, 120)}...` : rawText;
-    throw new Error(
-      sanitizeSecrets(
-        `${stepName} returned invalid non-JSON payload (HTTP ${response.status}): ${snippet}`,
-        secrets
-      )
-    );
+    const res = await fetchFn(url, {
+      ...fetchOptions,
+      signal: controller.signal,
+      redirect: "error", // Reject unexpected redirects to prevent credential leakage
+    });
+
+    // Read full response text while timeout timer is STILL ACTIVE
+    const bodyText = await res.text();
+
+    return {
+      ok: res.ok,
+      status: res.status,
+      bodyText,
+    };
+  } catch (err) {
+    if (controller.signal.aborted || (err instanceof Error && err.name === "AbortError")) {
+      throw new Error(`Request timed out after ${timeoutMs}ms during ${stepName}.`);
+    }
+    const rawMsg = err instanceof Error ? err.message : String(err);
+    if (rawMsg.toLowerCase().includes("redirect")) {
+      throw new Error(`Security violation: unexpected redirect encountered during ${stepName}. Redirects are rejected to protect credentials.`);
+    }
+    const sanitizedMsg = sanitizeSecrets(rawMsg, secrets);
+    throw new Error(`Network failure during ${stepName}: ${sanitizedMsg}`);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -109,15 +270,18 @@ export async function safeParseJsonResponse(response, stepName, secrets = []) {
  * @property {number} [details.authGetStatus]
  * @property {string} [details.storageMode]
  * @property {boolean} [details.persisted]
+ * @property {boolean} [details.markerVerified]
  */
 
 /**
  * Core persistence verification engine.
  *
  * @param {Object} [options]
- * @param {string} [options.baseUrl] - Target API base URL (e.g. "https://aheadguard-ai.vercel.app")
+ * @param {string} [options.baseUrl] - Target API base URL
  * @param {string} [options.adminKey] - Admin key for Authorization: Bearer <key>
  * @param {boolean} [options.confirmOptIn] - Explicit operator authorization flag
+ * @param {boolean} [options.isProd] - Whether targeting production canonical origin
+ * @param {string[]} [options.allowedOrigins] - Allowlist for custom test targets
  * @param {number} [options.timeoutMs] - Request timeout in milliseconds (default: 15000)
  * @param {Function} [options.fetchFn] - Optional fetch implementation (for unit testing)
  * @param {Object} [options.logger] - Optional logger interface
@@ -128,13 +292,15 @@ export async function verifyProductionPersistence(options = {}) {
     baseUrl: rawBaseUrl,
     adminKey: rawAdminKey,
     confirmOptIn = false,
+    isProd = false,
+    allowedOrigins = [],
     timeoutMs = 15000,
     fetchFn = globalThis.fetch,
     logger,
   } = options;
 
-  const log = (msg) => logger?.log ? logger.log(msg) : console.log(msg);
-  const warn = (msg) => logger?.warn ? logger.warn(msg) : console.warn(msg);
+  const log = (msg) => (logger?.log ? logger.log(msg) : console.log(msg));
+  const warn = (msg) => (logger?.warn ? logger.warn(msg) : console.warn(msg));
 
   // 1. Enforce explicit operator opt-in gate (Zero requests made if unconfirmed)
   if (!confirmOptIn) {
@@ -146,33 +312,17 @@ export async function verifyProductionPersistence(options = {}) {
     };
   }
 
-  // 2. Validate target URL
-  const trimmedUrl = (rawBaseUrl || "").trim();
-  if (!trimmedUrl) {
+  // 2. Validate target URL and enforce strict origin authorization
+  const originValidation = validateTargetOrigin(rawBaseUrl, isProd, allowedOrigins);
+  if (!originValidation.valid || !originValidation.origin) {
     return {
       success: false,
       optedIn: true,
-      error:
-        "Target URL required. Specify --prod to target https://aheadguard-ai.vercel.app or provide --url=https://...",
+      error: originValidation.error || "Invalid verification target origin.",
     };
   }
 
-  let parsedUrl;
-  try {
-    parsedUrl = new URL(trimmedUrl);
-    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-      throw new Error("Protocol must be http: or https:");
-    }
-  } catch (urlErr) {
-    const rawMsg = urlErr instanceof Error ? urlErr.message : String(urlErr);
-    return {
-      success: false,
-      optedIn: true,
-      error: `Invalid target URL: "${trimmedUrl}" (${rawMsg})`,
-    };
-  }
-
-  const baseUrl = parsedUrl.origin;
+  const baseUrl = originValidation.origin;
 
   // 3. Validate Administrator Key
   const adminKey = (rawAdminKey || "").trim();
@@ -196,37 +346,13 @@ export async function verifyProductionPersistence(options = {}) {
   log(`[AheadGuard Persistence Verifier] Starting verification against ${baseUrl}`);
   log(`[AheadGuard Persistence Verifier] Marker: ${marker}`);
 
-  // Helper for bounded fetch
-  const executeBoundedFetch = async (url, fetchOptions, stepName) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      return await fetchFn(url, {
-        ...fetchOptions,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(
-          sanitizeSecrets(`Request timed out after ${timeoutMs}ms during ${stepName} (${url})`, secrets)
-        );
-      }
-      const rawMsg = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        sanitizeSecrets(`Network failure during ${stepName}: ${rawMsg}`, secrets)
-      );
-    } finally {
-      clearTimeout(timer);
-    }
-  };
-
   let investigationId;
 
   // =========================================================================
   // STEP 1: POST harmless text-only probe to create a persisted record
   // =========================================================================
   try {
-    const postRes = await executeBoundedFetch(
+    const postRes = await executeBoundedRequest(
       `${baseUrl}/api/investigate`,
       {
         method: "POST",
@@ -236,22 +362,23 @@ export async function verifyProductionPersistence(options = {}) {
         },
         body: JSON.stringify(payload),
       },
-      "POST harmless text-only investigation"
+      "POST harmless text-only investigation",
+      timeoutMs,
+      fetchFn,
+      secrets
     );
 
     if (!postRes.ok) {
-      const errorData = await safeParseJsonResponse(postRes, "POST investigation error check", secrets).catch(() => ({}));
-      const errDetail = errorData?.error ? `: ${errorData.error}` : "";
       return {
         success: false,
         optedIn: true,
         marker,
-        error: sanitizeSecrets(`POST /api/investigate failed with HTTP ${postRes.status}${errDetail}`, secrets),
+        error: `POST /api/investigate failed with HTTP ${postRes.status}`,
         details: { postStatus: postRes.status },
       };
     }
 
-    const postData = await safeParseJsonResponse(postRes, "POST investigation", secrets);
+    const postData = parseJsonResponse(postRes.bodyText, postRes.status, "POST investigation");
     if (!postData || typeof postData !== "object" || !postData.report || typeof postData.report !== "object") {
       return {
         success: false,
@@ -270,7 +397,7 @@ export async function verifyProductionPersistence(options = {}) {
         success: false,
         optedIn: true,
         marker,
-        error: `POST /api/investigate returned invalid investigationId: "${String(investigationId)}"`,
+        error: "POST /api/investigate returned invalid investigationId.",
         details: { postStatus: postRes.status },
       };
     }
@@ -306,7 +433,7 @@ export async function verifyProductionPersistence(options = {}) {
   // =========================================================================
   let unauthStatus;
   try {
-    const unauthRes = await executeBoundedFetch(
+    const unauthRes = await executeBoundedRequest(
       `${baseUrl}/api/investigate?id=${encodeURIComponent(investigationId)}`,
       {
         method: "GET",
@@ -314,7 +441,10 @@ export async function verifyProductionPersistence(options = {}) {
           "Accept": "application/json",
         },
       },
-      "Unauthenticated record retrieval check"
+      "Unauthenticated record retrieval check",
+      timeoutMs,
+      fetchFn,
+      secrets
     );
 
     unauthStatus = unauthRes.status;
@@ -324,10 +454,7 @@ export async function verifyProductionPersistence(options = {}) {
         optedIn: true,
         investigationId,
         marker,
-        error: sanitizeSecrets(
-          `Security check failed: unauthenticated read of investigation '${investigationId}' returned HTTP ${unauthStatus}, expected HTTP 401 Unauthorized.`,
-          secrets
-        ),
+        error: `Security check failed: unauthenticated read of investigation returned HTTP ${unauthStatus}, expected HTTP 401 Unauthorized.`,
         details: {
           postStatus: 200,
           unauthGetStatus: unauthStatus,
@@ -359,7 +486,7 @@ export async function verifyProductionPersistence(options = {}) {
   // =========================================================================
   let authStatus;
   try {
-    const authRes = await executeBoundedFetch(
+    const authRes = await executeBoundedRequest(
       `${baseUrl}/api/investigate?id=${encodeURIComponent(investigationId)}`,
       {
         method: "GET",
@@ -368,7 +495,10 @@ export async function verifyProductionPersistence(options = {}) {
           "Authorization": `Bearer ${adminKey}`,
         },
       },
-      "Authenticated record retrieval"
+      "Authenticated record retrieval",
+      timeoutMs,
+      fetchFn,
+      secrets
     );
 
     authStatus = authRes.status;
@@ -397,7 +527,7 @@ export async function verifyProductionPersistence(options = {}) {
         optedIn: true,
         investigationId,
         marker,
-        error: `Persisted record '${investigationId}' was not found in the database (HTTP 404). The write may not have committed.`,
+        error: `Persisted record was not found in the database (HTTP 404). The write may not have committed.`,
         details: {
           postStatus: 200,
           unauthGetStatus: 401,
@@ -414,7 +544,7 @@ export async function verifyProductionPersistence(options = {}) {
         optedIn: true,
         investigationId,
         marker,
-        error: sanitizeSecrets(`Authenticated record read failed with HTTP ${authStatus}`, secrets),
+        error: `Authenticated record read failed with HTTP ${authStatus}`,
         details: {
           postStatus: 200,
           unauthGetStatus: 401,
@@ -425,7 +555,7 @@ export async function verifyProductionPersistence(options = {}) {
       };
     }
 
-    const authData = await safeParseJsonResponse(authRes, "Authenticated record read", secrets);
+    const authData = parseJsonResponse(authRes.bodyText, authRes.status, "Authenticated record read");
     if (!authData || typeof authData !== "object" || !authData.report || typeof authData.report !== "object") {
       return {
         success: false,
@@ -450,7 +580,7 @@ export async function verifyProductionPersistence(options = {}) {
         optedIn: true,
         investigationId,
         marker,
-        error: `Retrieved record ID '${retrievedReport.investigationId}' does not match expected ID '${investigationId}'.`,
+        error: `Retrieved record ID does not match expected ID.`,
         details: {
           postStatus: 200,
           unauthGetStatus: 401,
@@ -478,7 +608,30 @@ export async function verifyProductionPersistence(options = {}) {
       };
     }
 
+    // Explicit Marker Verification in Retrieved Stored Report
+    const messageExcerpt = retrievedReport.scamIntelligence?.messageExcerpt || "";
+    const fullReportJson = JSON.stringify(retrievedReport);
+
+    if (!messageExcerpt.includes(marker) && !fullReportJson.includes(marker)) {
+      return {
+        success: false,
+        optedIn: true,
+        investigationId,
+        marker,
+        error: `Persistence verification failed: retrieved record does not contain the unique test marker. The record was not accurately persisted.`,
+        details: {
+          postStatus: 200,
+          unauthGetStatus: 401,
+          authGetStatus: authStatus,
+          storageMode: "persisted",
+          persisted: true,
+          markerVerified: false,
+        },
+      };
+    }
+
     log(`[AheadGuard Persistence Verifier] Authenticated read succeeded: ID=${retrievedReport.investigationId}, outcome="${retrievedReport.riskOutcome}"`);
+    log(`[AheadGuard Persistence Verifier] Unique marker verified in stored record: ${marker}`);
   } catch (step3Err) {
     return {
       success: false,
@@ -512,6 +665,7 @@ export async function verifyProductionPersistence(options = {}) {
       authGetStatus: 200,
       storageMode: "persisted",
       persisted: true,
+      markerVerified: true,
     },
   };
 }
@@ -530,18 +684,25 @@ Usage:
 
 Options:
   --confirm-live-persistence   Required confirmation to authorize live requests
-  --prod                       Target production https://aheadguard-ai.vercel.app
-  --url=<url>                  Target specific API base URL
-  --key=<key>                  Administrator key (defaults to AHEADGUARD_ADMIN_KEY env var)
+  --prod                       Target canonical production origin: ${CANONICAL_PRODUCTION_ORIGIN}
+  --url=<url>                  Target specific API base URL (must be allowed)
+  --allow-origin=<origin>      Explicitly permit custom target origin (comma-separated or repeatable)
   --timeout=<ms>               Request timeout in milliseconds (default: 15000)
   --help, -h                   Show this help message
 
 Environment Variables:
   RUN_LIVE_PERSISTENCE_TEST    Set to "true" as alternative to --confirm-live-persistence
-  AHEADGUARD_ADMIN_KEY         Administrator Bearer token for record retrieval
-  PROD_URL                     Alternative base URL (default: https://aheadguard-ai.vercel.app)
+  AHEADGUARD_ADMIN_KEY         Administrator Bearer token for record retrieval (required)
+  PROD_URL                     Alternative base URL (default: ${CANONICAL_PRODUCTION_ORIGIN})
 `);
     return 0;
+  }
+
+  // Reject removed credential-bearing arguments
+  if (argv.some((a) => a.startsWith("--key=") || a === "--key")) {
+    console.error(`\n[FATAL] Security violation: The --key command-line argument has been removed for security.`);
+    console.error(`Credentials must never be passed via CLI arguments. Configure the AHEADGUARD_ADMIN_KEY environment variable instead.\n`);
+    return 1;
   }
 
   const confirmOptIn =
@@ -572,10 +733,28 @@ Environment Variables:
 
   const isProd = argv.includes("--prod") || argv.includes("--target=production");
   const urlArg = argv.find((a) => a.startsWith("--url="))?.split("=")[1];
-  const baseUrl = urlArg || (isProd ? "https://aheadguard-ai.vercel.app" : process.env.PROD_URL || process.env.TARGET_URL);
 
-  const keyArg = argv.find((a) => a.startsWith("--key="))?.split("=")[1];
-  const adminKey = keyArg || process.env.AHEADGUARD_ADMIN_KEY;
+  // Conflict detection
+  if (isProd && urlArg && urlArg.trim() !== CANONICAL_PRODUCTION_ORIGIN) {
+    console.error(`\n[FATAL] Target conflict: --prod cannot be combined with a conflicting --url.`);
+    console.error(`Production mode strictly targets ${CANONICAL_PRODUCTION_ORIGIN}.\n`);
+    return 1;
+  }
+
+  const baseUrl = urlArg || (isProd ? CANONICAL_PRODUCTION_ORIGIN : process.env.PROD_URL || process.env.TARGET_URL);
+
+  // Parse allowed origins
+  const allowedOrigins = [];
+  for (const arg of argv) {
+    if (arg.startsWith("--allow-origin=")) {
+      const val = arg.split("=")[1];
+      if (val) {
+        allowedOrigins.push(...val.split(",").map((s) => s.trim()));
+      }
+    }
+  }
+
+  const adminKey = process.env.AHEADGUARD_ADMIN_KEY;
 
   const timeoutArg = argv.find((a) => a.startsWith("--timeout="))?.split("=")[1];
   const timeoutMs = timeoutArg ? parseInt(timeoutArg, 10) : 15000;
@@ -584,6 +763,8 @@ Environment Variables:
     baseUrl,
     adminKey,
     confirmOptIn,
+    isProd,
+    allowedOrigins,
     timeoutMs,
   });
 
@@ -598,6 +779,7 @@ Environment Variables:
   console.log(`\n[SUCCESS] Production persistence verified successfully!`);
   console.log(`  - Investigation ID: ${result.investigationId}`);
   console.log(`  - Storage Mode:     persisted`);
+  console.log(`  - Marker Verified:  true (${result.marker})`);
   console.log(`  - Security Gate:    Unauthenticated read correctly rejected (HTTP 401)`);
   console.log(`  - Admin Gate:       Authenticated read retrieved valid record (HTTP 200)`);
   return 0;

@@ -263,6 +263,12 @@ AheadGuard uses an idempotent schema migration runner to provision the `investig
     *(Submits a harmless text-only probe containing a unique audit marker and NO URLs to avoid TinyFish provider charges. Asserts that the response confirms `report.investigationId`, `report.persisted === true`, and `report.storageMode === "persisted"`. Verifies that an unauthenticated GET is rejected with HTTP 401 Unauthorized, and confirms that an authenticated GET with `Authorization: Bearer <key>` retrieves the exact record).*
   - **Persistence Release Gate Certification Rule:**
     Production persistence is officially certified **only** after Phase 2 succeeds with verified database write and authenticated read confirmation. Verification records contain a distinct marker prefix (`aheadguard-persistence-probe-...`) and remain safely recorded in Neon PostgreSQL; AheadGuard deliberately does not expose an unauthenticated deletion endpoint to safeguard audit ledger immutability.
+  - **Persistence Verifier Security & Target Authorization Controls:**
+    - **Strict Production Origin:** `--prod` mode permits only the canonical production origin `https://aheadguard-ai.vercel.app`. Any conflicting `--url` is rejected before network dispatch.
+    - **Custom Target Allowlisting:** Custom destinations require explicit origin authorization via `--allow-origin=<origin>`. Plain HTTP is prohibited for all non-loopback destinations. Embedded credentials (URL userinfo) are strictly rejected.
+    - **Credential Isolation:** Passing credentials via command-line flags (`--key`) is disabled. The administrator key is read exclusively from `AHEADGUARD_ADMIN_KEY` in the process environment.
+    - **Redirect & Timeout Boundary:** Verification requests reject unexpected redirects (`redirect: "error"`) to prevent credential leakage. Timeouts strictly cover the complete lifecycle including response body parsing.
+    - **Marker Verification:** The verifier asserts that the unique audit marker generated for the write is present in the persisted record returned during the authenticated read.
 
 > **Security Analysis of PowerShell .NET Memory Boundary:**
 > `Read-Host -AsSecureString` prevents terminal echo and excludes sensitive input from `PSReadLine` command history (`ConsoleHistory.txt`). `Marshal.ZeroFreeBSTR` immediately zeroes unmanaged BSTR memory. However, passing the credential to Node.js requires conversion to a .NET string (`PtrToStringBSTR`), which allocates an immutable managed `System.String` on the CLR heap that cannot be explicitly zeroized from script execution and persists until garbage collection. In the `finally` block, `Remove-Item env:DATABASE_URL` clears the process environment variable and `$plainUrl = $null` unroots the managed string reference. For zero-residual compliance, execute migrations in an ephemeral PowerShell sub-process (`powershell -NoProfile -Command ...`).
@@ -297,7 +303,7 @@ AheadGuard implements an in-memory sliding window rate limiter (20 req/min, burs
 AheadGuard AI includes a comprehensive suite of automated tests verifying CORS allowlisting, rate limiting, safety policies, SSE streaming, and 26 real-world security scenarios:
 
 ```bash
-# Run unit & integration test suite (Vitest - 341+ automated tests)
+# Run unit & integration test suite (Vitest - 350+ automated tests)
 npm test
 
 # Run default smoke test suite (opt-in tests skipped)
