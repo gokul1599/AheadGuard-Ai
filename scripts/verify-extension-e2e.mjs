@@ -346,20 +346,32 @@ async function main() {
     browserProc = spawn(browserBin, [
       "--headless=new",
       `--remote-debugging-port=${port}`,
+      "--remote-debugging-address=127.0.0.1",
       `--user-data-dir=${tempProfile}`,
       `--disable-extensions-except=${extPath}`,
       `--load-extension=${extPath}`,
       "--no-sandbox",
+      "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
       "--no-first-run",
       "--no-default-browser-check",
     ]);
 
+    let browserStderr = "";
+    browserProc.stderr?.on("data", (chunk) => {
+      browserStderr += chunk.toString();
+    });
+
     // Bounded wait for CDP responsiveness
     let cdpReady = false;
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 25; i++) {
       await sleep(500);
+      if (browserProc.exitCode !== null) {
+        throw new Error(
+          `Chromium exited prematurely with code ${browserProc.exitCode}.\nStderr:\n${browserStderr}`
+        );
+      }
       try {
         const vRes = await fetch(`http://127.0.0.1:${port}/json/version`);
         if (vRes.ok) {
@@ -369,7 +381,9 @@ async function main() {
       } catch {}
     }
     if (!cdpReady) {
-      throw new Error(`Chromium CDP failed to respond on port ${port} within 10s.`);
+      throw new Error(
+        `Chromium CDP failed to respond on port ${port} within 12.5s.\nBrowser stderr:\n${browserStderr || "(none)"}`
+      );
     }
     console.log("  ✓ Chromium DevTools Protocol (CDP) ready.");
 
