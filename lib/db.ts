@@ -205,6 +205,66 @@ export async function testDatabaseConnection(): Promise<DatabaseConnectionResult
   }
 }
 
+export interface MigrationEndpointValidationResult {
+  valid: boolean;
+  error?: string;
+  hostname?: string;
+}
+
+/**
+ * Validates the migration database connection endpoint.
+ *
+ * Rules:
+ * - Must be configured and non-empty.
+ * - Must be a valid URI with scheme 'postgres:' or 'postgresql:'.
+ * - Must NOT be a Neon pooled connection endpoint (must not contain '-pooler' or 'pgbouncer=true').
+ *   Migrations require PostgreSQL session-level advisory locks (pg_advisory_lock), which are
+ *   incompatible with pooled transaction-mode proxies. Direct connection endpoints are strictly required.
+ * - Never leaks secrets, passwords, or credentials in validation error messages.
+ */
+export function validateMigrationEndpoint(
+  connectionString?: string | null
+): MigrationEndpointValidationResult {
+  if (!connectionString || typeof connectionString !== "string" || connectionString.trim().length === 0) {
+    return {
+      valid: false,
+      error: "MIGRATION_DATABASE_URL environment variable is not configured. Dedicated direct connection string required for migrations.",
+    };
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(connectionString.trim());
+  } catch {
+    return {
+      valid: false,
+      error: "Invalid migration connection string: URI syntax is malformed.",
+    };
+  }
+
+  if (parsed.protocol !== "postgres:" && parsed.protocol !== "postgresql:") {
+    return {
+      valid: false,
+      error: "Invalid migration connection string: scheme must be postgresql: or postgres:.",
+    };
+  }
+
+  const isPoolerHost = parsed.hostname.toLowerCase().includes("-pooler");
+  const hasPgBouncerParam = parsed.searchParams.get("pgbouncer") === "true";
+
+  if (isPoolerHost || hasPgBouncerParam) {
+    return {
+      valid: false,
+      error: "Incompatible migration endpoint: Neon pooled connection string detected (contains '-pooler' or 'pgbouncer=true'). Migrations require session-level advisory locking (pg_advisory_lock) and must use a direct endpoint without '-pooler'.",
+    };
+  }
+
+  return {
+    valid: true,
+    hostname: parsed.hostname,
+  };
+}
+
 export interface SchemaValidationResult {
   ok: boolean;
   errors: string[];

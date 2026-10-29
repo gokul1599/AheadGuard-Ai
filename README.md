@@ -144,11 +144,17 @@ aheadguard-mvp-starter/
    # Comma-separated 32-character lowercase Chrome Extension IDs approved for CORS
    ALLOWED_EXTENSION_IDS=abcdefghijklmnopqrstuvwxyzabcdef
 
-   # Neon Serverless Postgres Connection String (for persistence)
+   # Neon Serverless Postgres Connection String (Application Runtime - Pooled)
    DATABASE_URL=postgresql://user:password@ep-sample-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
 
-   # Administrator Secret Key for querying stored investigation history (/api/investigate?action=history)
-   AHEADGUARD_ADMIN_KEY=your_secure_admin_secret_key_here
+   # Dedicated Neon Migration Connection String (Direct Session Endpoint - No Pooler)
+   MIGRATION_DATABASE_URL=postgresql://user:password@ep-sample.us-east-2.aws.neon.tech/neondb?sslmode=require
+
+   # Administrator Secret Key for Production Admin Access (/api/investigate?action=history)
+   AHEADGUARD_ADMIN_KEY=your_secure_production_admin_secret_key_here
+
+   # Dedicated Test Administrator Key for Non-Production & Local Testing
+   AHEADGUARD_TEST_ADMIN_KEY=your_secure_test_admin_secret_key_here
    ```
 
 4. Build the Chrome extension assets:
@@ -199,32 +205,39 @@ For production deployment at `https://aheadguard-ai.vercel.app`, configure these
 |:---|:---:|:---|
 | `TINYFISH_API_KEY` | Yes | API key for TinyFish headless web crawler |
 | `ALLOWED_EXTENSION_IDS` | Yes | Comma-separated 32-letter Chrome Extension IDs allowed for CORS |
-| `DATABASE_URL` | Recommended | Neon PostgreSQL connection string with `?sslmode=require` |
-| `AHEADGUARD_ADMIN_KEY` | Recommended | Secret key for administrative history and record access |
+| `DATABASE_URL` | Recommended | Neon PostgreSQL pooled connection string (`*-pooler...`) with `?sslmode=require` |
+| `AHEADGUARD_ADMIN_KEY` | Recommended | Secret key for administrative history and production persistence verification |
 
-> **Note on Administrator Key Configuration:**
-> The canonical environment variable name for administrator authentication is strictly `AHEADGUARD_ADMIN_KEY`. AheadGuard AI intentionally does not implement fallback aliases (such as `ADMIN_API_KEY`) to prevent accidental configuration drift or ambiguity across deployment environments.
+> **Connection String & Migration Isolation Architecture:**
+> - **Application Serverless Traffic (`DATABASE_URL`):** Must use the **Neon Connection Pooler** endpoint (contains `-pooler`, e.g. `ep-sample-pooler.us-east-2.aws.neon.tech`). This enables optimal connection pooling across high-concurrency Next.js serverless functions.
+> - **Schema Migration Runner (`MIGRATION_DATABASE_URL`):** Must use the **Direct Neon** endpoint (does NOT contain `-pooler` or `pgbouncer=true`). The migration runner (`scripts/migrate.mjs`) strictly consumes `MIGRATION_DATABASE_URL` with zero fallback to `DATABASE_URL`. It establishes a dedicated WebSocket session and acquires PostgreSQL session-level advisory locks (`pg_advisory_lock`), which are fundamentally incompatible with connection pooling proxies.
+
+> **Note on Administrator Key Configuration & Isolation:**
+> - **Production Mode (`--prod`):** Strictly targets canonical origin `https://aheadguard-ai.vercel.app` and requires `AHEADGUARD_ADMIN_KEY`.
+> - **Non-Production Mode (`--url`):** Strictly requires `AHEADGUARD_TEST_ADMIN_KEY` and explicit target allowlisting (`--allow-origin=<origin>`). The verifier rejects execution if only `AHEADGUARD_ADMIN_KEY` is present to eliminate accidental leakage of production administrator secrets to test or local servers.
+> - AheadGuard AI intentionally does not implement fallback aliases (such as `ADMIN_API_KEY`) to prevent configuration drift.
 
 ### Database Migration & Schema Setup
 
-AheadGuard uses an idempotent schema migration runner to provision the `investigations` table and indexes in Neon PostgreSQL.
+AheadGuard uses an idempotent schema migration runner to provision the `investigations` table and indexes in Neon PostgreSQL over a dedicated direct session.
 
 - **1. Local Development Execution (loads `.env.local`):**
+  Configure `MIGRATION_DATABASE_URL` in `.env.local` and run:
   ```powershell
   npm run db:migrate
   ```
-  *(Executes `node --env-file=.env.local scripts/migrate.mjs` using the local development `.env.local` file).*
+  *(Executes `node --env-file=.env.local scripts/migrate.mjs` using the direct migration endpoint from `.env.local`).*
 
-- **2. Isolated Test Execution (Windows PowerShell with Dedicated Test Database):**
-  Use an explicitly identified non-production test database branch to verify migrations without affecting production data:
+- **2. Isolated Test Execution (Windows PowerShell with Dedicated Direct Test Database):**
+  Use an explicitly identified non-production direct database branch (without `-pooler`) to verify migrations without affecting production data:
   ```powershell
-  $secUrl = Read-Host "Enter isolated test DATABASE_URL" -AsSecureString
+  $secUrl = Read-Host "Enter isolated direct MIGRATION_DATABASE_URL (no -pooler)" -AsSecureString
   $bstr = [System.IntPtr]::Zero
   $plainUrl = $null
   try {
       $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secUrl)
       $plainUrl = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-      $env:DATABASE_URL = $plainUrl
+      $env:MIGRATION_DATABASE_URL = $plainUrl
       node scripts/migrate.mjs
       if ($LASTEXITCODE -ne 0) { throw "Migration failed with code $LASTEXITCODE" }
       Write-Host "Migration executed successfully on isolated test database." -ForegroundColor Green
@@ -234,7 +247,7 @@ AheadGuard uses an idempotent schema migration runner to provision the `investig
       if ($bstr -ne [System.IntPtr]::Zero) {
           [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
       }
-      Remove-Item env:DATABASE_URL -ErrorAction SilentlyContinue
+      Remove-Item env:MIGRATION_DATABASE_URL -ErrorAction SilentlyContinue
       $plainUrl = $null
       $secUrl = $null
   }
@@ -243,10 +256,10 @@ AheadGuard uses an idempotent schema migration runner to provision the `investig
 - **3. Production Execution (Owner-Authorized Release Gate Only):**
   Production migration must be executed exclusively by the repository owner following explicit authorization:
   - **Prerequisite 1 — Credential Rotation:** Rotate the Neon database password in the Neon Console to ensure fresh credentials before production deployment.
-  - **Prerequisite 2 — Configuration Synchronization:** Update `DATABASE_URL` and `AHEADGUARD_ADMIN_KEY` in Vercel Production Environment Variables.
-  - **Prerequisite 3 — Target Branch Confirmation:** Verify that the target database endpoint strictly corresponds to the primary production branch (`main`), not a preview branch or local development database.
+  - **Prerequisite 2 — Configuration Synchronization:** Update `DATABASE_URL` (Neon pooled endpoint) and `AHEADGUARD_ADMIN_KEY` in Vercel Production Environment Variables.
+  - **Prerequisite 3 — Target Branch Confirmation:** Verify that the direct migration endpoint strictly corresponds to the primary production branch (`main`), not a preview branch or local development database.
   - **Prerequisite 4 — Recovery Plan:** Create an immediate Neon branch snapshot prior to running the migration. Note that point-in-time recovery (PITR) rewinds database state; any investigations logged between the snapshot time and a potential restore would be omitted.
-  - **Execution:** Run `node scripts/migrate.mjs` via an ephemeral secure PowerShell session where credentials are provided interactively via `Read-Host -AsSecureString` and never written to disk or logs.
+  - **Execution:** Run `node scripts/migrate.mjs` via an ephemeral secure PowerShell session providing `MIGRATION_DATABASE_URL` interactively via `Read-Host -AsSecureString`.
   - **Post-Verification Phase 1 — Database Readiness Gate:**
     Run the strict readiness smoke gate to verify that the deployed edge environment reports active database connectivity:
     ```powershell
@@ -256,22 +269,44 @@ AheadGuard uses an idempotent schema migration runner to provision the `investig
   - **Post-Verification Phase 2 — Production Persistence Certification Gate:**
     Execute the dedicated, opt-in persistence verification probe to certify true end-to-end database write and authorized read:
     ```powershell
-    $env:RUN_LIVE_PERSISTENCE_TEST = "true"
-    $env:AHEADGUARD_ADMIN_KEY = "your_production_admin_secret_key"
-    npm run test:smoke:persistence -- --confirm-live-persistence --prod
+    $secKey = Read-Host "Enter production AHEADGUARD_ADMIN_KEY" -AsSecureString
+    $bstr = [System.IntPtr]::Zero
+    $plainKey = $null
+    try {
+        $bstr = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secKey)
+        $plainKey = [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        $env:RUN_LIVE_PERSISTENCE_TEST = "true"
+        $env:AHEADGUARD_ADMIN_KEY = $plainKey
+        npm run test:smoke:persistence -- --confirm-live-persistence --prod
+    } finally {
+        if ($bstr -ne [System.IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+        Remove-Item env:AHEADGUARD_ADMIN_KEY -ErrorAction SilentlyContinue
+        Remove-Item env:RUN_LIVE_PERSISTENCE_TEST -ErrorAction SilentlyContinue
+        $plainKey = $null
+        $secKey = $null
+    }
     ```
     *(Submits a harmless text-only probe containing a unique audit marker and NO URLs to avoid TinyFish provider charges. Asserts that the response confirms `report.investigationId`, `report.persisted === true`, and `report.storageMode === "persisted"`. Verifies that an unauthenticated GET is rejected with HTTP 401 Unauthorized, and confirms that an authenticated GET with `Authorization: Bearer <key>` retrieves the exact record).*
+  - **Non-Production Persistence Verification (Local / Staging):**
+    For testing against non-production targets (e.g. `http://localhost:3000`), supply `AHEADGUARD_TEST_ADMIN_KEY` and explicit `--allow-origin`:
+    ```powershell
+    $env:RUN_LIVE_PERSISTENCE_TEST = "true"
+    $env:AHEADGUARD_TEST_ADMIN_KEY = "your_local_test_admin_key"
+    npm run test:smoke:persistence -- --confirm-live-persistence --url=http://localhost:3000 --allow-origin=http://localhost:3000
+    ```
   - **Persistence Release Gate Certification Rule:**
     Production persistence is officially certified **only** after Phase 2 succeeds with verified database write and authenticated read confirmation. Verification records contain a distinct marker prefix (`aheadguard-persistence-probe-...`) and remain safely recorded in Neon PostgreSQL; AheadGuard deliberately does not expose an unauthenticated deletion endpoint to safeguard audit ledger immutability.
   - **Persistence Verifier Security & Target Authorization Controls:**
     - **Strict Production Origin:** `--prod` mode permits only the canonical production origin `https://aheadguard-ai.vercel.app`. Any conflicting `--url` is rejected before network dispatch.
-    - **Custom Target Allowlisting:** Custom destinations require explicit origin authorization via `--allow-origin=<origin>`. Plain HTTP is prohibited for all non-loopback destinations. Embedded credentials (URL userinfo) are strictly rejected.
-    - **Credential Isolation:** Passing credentials via command-line flags (`--key`) is disabled. The administrator key is read exclusively from `AHEADGUARD_ADMIN_KEY` in the process environment.
+    - **Custom Target Allowlisting:** Custom destinations (including local loopback) require explicit origin authorization via `--allow-origin=<origin>`. Plain HTTP is prohibited for all non-loopback destinations. Embedded credentials (URL userinfo) are strictly rejected.
+    - **Credential Isolation:** Passing credentials via command-line flags (`--key`, `--test-key`, `--admin-key`) is disabled. The production administrator key is read exclusively from `AHEADGUARD_ADMIN_KEY`, and non-production targets strictly require `AHEADGUARD_TEST_ADMIN_KEY`. Production keys are never transmitted to non-production targets.
     - **Redirect & Timeout Boundary:** Verification requests reject unexpected redirects (`redirect: "error"`) to prevent credential leakage. Timeouts strictly cover the complete lifecycle including response body parsing.
     - **Marker Verification:** The verifier asserts that the unique audit marker generated for the write is present in the persisted record returned during the authenticated read.
 
 > **Security Analysis of PowerShell .NET Memory Boundary:**
-> `Read-Host -AsSecureString` prevents terminal echo and excludes sensitive input from `PSReadLine` command history (`ConsoleHistory.txt`). `Marshal.ZeroFreeBSTR` immediately zeroes unmanaged BSTR memory. However, passing the credential to Node.js requires conversion to a .NET string (`PtrToStringBSTR`), which allocates an immutable managed `System.String` on the CLR heap that cannot be explicitly zeroized from script execution and persists until garbage collection. In the `finally` block, `Remove-Item env:DATABASE_URL` clears the process environment variable and `$plainUrl = $null` unroots the managed string reference. For zero-residual compliance, execute migrations in an ephemeral PowerShell sub-process (`powershell -NoProfile -Command ...`).
+> `Read-Host -AsSecureString` prevents terminal echo and excludes sensitive input from `PSReadLine` command history (`ConsoleHistory.txt`). `Marshal.ZeroFreeBSTR` immediately zeroes unmanaged BSTR memory. However, passing the credential to Node.js requires conversion to a .NET string (`PtrToStringBSTR`), which allocates an immutable managed `System.String` on the CLR heap that cannot be explicitly zeroized from script execution and persists until garbage collection. In the `finally` block, `Remove-Item env:MIGRATION_DATABASE_URL` clears the process environment variable and `$plainUrl = $null` unroots the managed string reference. For zero-residual compliance, execute migrations in an ephemeral PowerShell sub-process (`powershell -NoProfile -Command ...`).
 
 > **Migration Concurrency & Non-Destructive Integrity Safety:**
 > 1. **Dedicated Session & Advisory Locking:** The migration establishes a single dedicated PostgreSQL connection (`Client`) over WebSockets (via the `ws` package) rather than stateless HTTP requests. It configures bounded session timeouts (`SET lock_timeout = '5000ms';` and `SET statement_timeout = '10000ms';`) and acquires a session-level advisory lock (`pg_advisory_lock(7429103)`). All pre-validation checks and DDL run on this exact live session. The lock is released on the same session in `finally`, and closing the session (`client.end()`) guarantees PostgreSQL will release any session locks even in the event of an abnormal abort.

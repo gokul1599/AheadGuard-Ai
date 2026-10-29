@@ -1,6 +1,7 @@
 export interface PersistenceVerificationOptions {
   baseUrl?: string;
   adminKey?: string;
+  testAdminKey?: string;
   confirmOptIn?: boolean;
   isProd?: boolean;
   allowedOrigins?: string[];

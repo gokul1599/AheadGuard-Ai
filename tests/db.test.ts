@@ -12,9 +12,11 @@ import {
   validateTableStructure,
   validateDatabaseSchema,
   validateDatabaseHealthContract,
+  validateMigrationEndpoint,
   SessionQueryClient,
   createSessionSql,
 } from "../lib/db";
+import { validateMigrationEndpoint as validateMigrationEndpointScript } from "../scripts/migrate.mjs";
 import { verifyAdminAuth } from "../lib/api-security";
 import { InvestigationReport } from "../lib/types";
 import { DEMO_SCENARIO_A } from "../lib/demo-data";
@@ -991,6 +993,102 @@ describe("Neon Serverless Postgres Integration & Persistence", () => {
       const res2 = validateDatabaseHealthContract(leakyResponse2);
       expect(res2.valid).toBe(false);
       expect(res2.error).toContain("Security violation");
+    });
+  });
+
+  describe("Dedicated Migration Endpoint Validation & Contract", () => {
+    const validDirectUrl =
+      "postgresql://user:secretpass@ep-sample-12345.us-east-2.aws.neon.tech/neondb?sslmode=require";
+    const pooledUrl =
+      "postgresql://user:secretpass@ep-sample-12345-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
+    const pgBouncerUrl =
+      "postgresql://user:secretpass@ep-sample-12345.us-east-2.aws.neon.tech/neondb?sslmode=require&pgbouncer=true";
+
+    it("rejects missing, empty, or whitespace-only connection string", () => {
+      const resNull = validateMigrationEndpoint(null);
+      expect(resNull.valid).toBe(false);
+      expect(resNull.error).toContain("MIGRATION_DATABASE_URL environment variable is not configured");
+
+      const resUndefined = validateMigrationEndpoint(undefined);
+      expect(resUndefined.valid).toBe(false);
+      expect(resUndefined.error).toContain("MIGRATION_DATABASE_URL environment variable is not configured");
+
+      const resEmpty = validateMigrationEndpoint("   ");
+      expect(resEmpty.valid).toBe(false);
+      expect(resEmpty.error).toContain("MIGRATION_DATABASE_URL environment variable is not configured");
+    });
+
+    it("rejects malformed URI syntax without throwing", () => {
+      const res = validateMigrationEndpoint("not-a-valid-uri");
+      expect(res.valid).toBe(false);
+      expect(res.error).toContain("URI syntax is malformed");
+    });
+
+    it("rejects non-PostgreSQL URI schemes", () => {
+      const resHttp = validateMigrationEndpoint("https://example.com/db");
+      expect(resHttp.valid).toBe(false);
+      expect(resHttp.error).toContain("scheme must be postgresql: or postgres:");
+
+      const resMysql = validateMigrationEndpoint("mysql://user:pass@ep-test.neon.tech/db");
+      expect(resMysql.valid).toBe(false);
+      expect(resMysql.error).toContain("scheme must be postgresql: or postgres:");
+    });
+
+    it("strictly rejects Neon pooled endpoints containing '-pooler'", () => {
+      const res = validateMigrationEndpoint(pooledUrl);
+      expect(res.valid).toBe(false);
+      expect(res.error).toContain("Incompatible migration endpoint: Neon pooled connection string detected");
+      expect(res.error).toContain("contains '-pooler'");
+      expect(res.error).toContain("pg_advisory_lock");
+      // Security: never echo password or full connection string in error
+      expect(res.error).not.toContain("secretpass");
+      expect(res.error).not.toContain("user:");
+    });
+
+    it("strictly rejects connection strings containing 'pgbouncer=true'", () => {
+      const res = validateMigrationEndpoint(pgBouncerUrl);
+      expect(res.valid).toBe(false);
+      expect(res.error).toContain("Incompatible migration endpoint: Neon pooled connection string detected");
+      expect(res.error).not.toContain("secretpass");
+    });
+
+    it("accepts valid direct Neon PostgreSQL connection string", () => {
+      const res = validateMigrationEndpoint(validDirectUrl);
+      expect(res.valid).toBe(true);
+      expect(res.hostname).toBe("ep-sample-12345.us-east-2.aws.neon.tech");
+      expect(res.error).toBeUndefined();
+    });
+
+    it("accepts valid postgres: scheme (alternative to postgresql:)", () => {
+      const altUrl = "postgres://user:secretpass@ep-direct-abc.us-east-2.aws.neon.tech/neondb?sslmode=require";
+      const res = validateMigrationEndpoint(altUrl);
+      expect(res.valid).toBe(true);
+      expect(res.hostname).toBe("ep-direct-abc.us-east-2.aws.neon.tech");
+    });
+
+    it("guarantees migration script validator parity with lib/db implementation", () => {
+      expect(validateMigrationEndpointScript(validDirectUrl)).toEqual(validateMigrationEndpoint(validDirectUrl));
+      expect(validateMigrationEndpointScript(pooledUrl)).toEqual(validateMigrationEndpoint(pooledUrl));
+      expect(validateMigrationEndpointScript(null)).toEqual(validateMigrationEndpoint(null));
+    });
+
+    it("strictly verifies zero fallback to DATABASE_URL in migration runner logic", () => {
+      const prevMigrationUrl = process.env.MIGRATION_DATABASE_URL;
+      const prevDbUrl = process.env.DATABASE_URL;
+      try {
+        delete process.env.MIGRATION_DATABASE_URL;
+        process.env.DATABASE_URL = validDirectUrl;
+
+        // Validating migration endpoint when MIGRATION_DATABASE_URL is missing must fail even if DATABASE_URL is set
+        const res = validateMigrationEndpoint(process.env.MIGRATION_DATABASE_URL);
+        expect(res.valid).toBe(false);
+        expect(res.error).toContain("MIGRATION_DATABASE_URL environment variable is not configured");
+      } finally {
+        if (prevMigrationUrl !== undefined) process.env.MIGRATION_DATABASE_URL = prevMigrationUrl;
+        else delete process.env.MIGRATION_DATABASE_URL;
+        if (prevDbUrl !== undefined) process.env.DATABASE_URL = prevDbUrl;
+        else delete process.env.DATABASE_URL;
+      }
     });
   });
 });

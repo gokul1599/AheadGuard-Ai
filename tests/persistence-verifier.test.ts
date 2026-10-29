@@ -73,12 +73,22 @@ describe("Hardened Production Persistence Verifier", () => {
       expect(res.error).not.toContain("remote-server.com");
     });
 
-    it("permits plain HTTP for local loopback development", () => {
+    it("rejects local loopback origin when not in the approved origin allowlist", () => {
       const res = validateTargetOrigin("http://localhost:3000", false);
+      expect(res.valid).toBe(false);
+      expect(res.error).toContain("loopback origin is not in the approved origin allowlist");
+
+      const resIp = validateTargetOrigin("http://127.0.0.1:3000", false);
+      expect(resIp.valid).toBe(false);
+      expect(resIp.error).toContain("loopback origin is not in the approved origin allowlist");
+    });
+
+    it("permits plain HTTP for local loopback development when explicitly in allowedOrigins", () => {
+      const res = validateTargetOrigin("http://localhost:3000", false, ["http://localhost:3000"]);
       expect(res.valid).toBe(true);
       expect(res.origin).toBe("http://localhost:3000");
 
-      const resIp = validateTargetOrigin("http://127.0.0.1:3000", false);
+      const resIp = validateTargetOrigin("http://127.0.0.1:3000", false, ["http://127.0.0.1:3000"]);
       expect(resIp.valid).toBe(true);
       expect(resIp.origin).toBe("http://127.0.0.1:3000");
     });
@@ -186,7 +196,7 @@ describe("Hardened Production Persistence Verifier", () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it("fails if AHEADGUARD_ADMIN_KEY is missing or empty", async () => {
+    it("fails if AHEADGUARD_ADMIN_KEY is missing or empty for production target", async () => {
       const mockFetch = vi.fn();
 
       const result = await verifyProductionPersistence({
@@ -198,8 +208,71 @@ describe("Hardened Production Persistence Verifier", () => {
 
       expect(result.success).toBe(false);
       expect(result.optedIn).toBe(true);
-      expect(result.error).toContain("AHEADGUARD_ADMIN_KEY is required");
+      expect(result.error).toContain("AHEADGUARD_ADMIN_KEY is required for production persistence verification.");
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("fails if non-production target is called without testAdminKey and without AHEADGUARD_TEST_ADMIN_KEY", async () => {
+      const mockFetch = vi.fn();
+
+      const result = await verifyProductionPersistence({
+        baseUrl: "http://localhost:3000",
+        allowedOrigins: ["http://localhost:3000"],
+        confirmOptIn: true,
+        fetchFn: mockFetch,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.optedIn).toBe(true);
+      expect(result.error).toContain("AHEADGUARD_TEST_ADMIN_KEY is required for non-production persistence verification.");
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("fails if non-production target is called with only AHEADGUARD_ADMIN_KEY / adminKey (zero fallback to prod key)", async () => {
+      const mockFetch = vi.fn();
+
+      const result = await verifyProductionPersistence({
+        baseUrl: "http://localhost:3000",
+        allowedOrigins: ["http://localhost:3000"],
+        adminKey: dummyAdminKey,
+        confirmOptIn: true,
+        fetchFn: mockFetch,
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.optedIn).toBe(true);
+      expect(result.error).toContain(
+        "Non-production verification targets require AHEADGUARD_TEST_ADMIN_KEY. Production AHEADGUARD_ADMIN_KEY cannot be transmitted to non-production targets."
+      );
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("ensures non-production target never falls back to AHEADGUARD_ADMIN_KEY in process.env", async () => {
+      const mockFetch = vi.fn();
+      const prevAdminKey = process.env.AHEADGUARD_ADMIN_KEY;
+      const prevTestKey = process.env.AHEADGUARD_TEST_ADMIN_KEY;
+      try {
+        process.env.AHEADGUARD_ADMIN_KEY = "prod_super_secret_key_999";
+        delete process.env.AHEADGUARD_TEST_ADMIN_KEY;
+
+        const result = await verifyProductionPersistence({
+          baseUrl: "http://localhost:3000",
+          allowedOrigins: ["http://localhost:3000"],
+          confirmOptIn: true,
+          fetchFn: mockFetch,
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.error).toContain(
+          "Non-production verification targets require AHEADGUARD_TEST_ADMIN_KEY. Production AHEADGUARD_ADMIN_KEY cannot be transmitted to non-production targets."
+        );
+        expect(mockFetch).not.toHaveBeenCalled();
+      } finally {
+        if (prevAdminKey !== undefined) process.env.AHEADGUARD_ADMIN_KEY = prevAdminKey;
+        else delete process.env.AHEADGUARD_ADMIN_KEY;
+        if (prevTestKey !== undefined) process.env.AHEADGUARD_TEST_ADMIN_KEY = prevTestKey;
+        else delete process.env.AHEADGUARD_TEST_ADMIN_KEY;
+      }
     });
   });
 
@@ -466,7 +539,9 @@ describe("Hardened Production Persistence Verifier", () => {
       });
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("Admin authentication failed: server rejected the provided AHEADGUARD_ADMIN_KEY with HTTP 401");
+      expect(result.error).toContain(
+        "Admin authentication failed: server rejected the provided administrative credential with HTTP 401 Unauthorized."
+      );
       expect(result.details?.authGetStatus).toBe(401);
     });
 
@@ -513,6 +588,48 @@ describe("Hardened Production Persistence Verifier", () => {
       expect(result.error).not.toContain(dummyAdminKey);
       expect(result.error).toContain("[REDACTED]");
     });
+
+    it("succeeds against non-production target when testAdminKey is provided and origin is allowed", async () => {
+      const mockFetch = vi.fn();
+      const dummyTestKey = "test_local_admin_key_99999999";
+      let capturedMarker = "";
+
+      mockFetch.mockImplementationOnce(async (_url, options) => {
+        const body = JSON.parse(options.body);
+        const match = body.input.match(/\[(aheadguard-persistence-probe-[^\]]+)\]/);
+        capturedMarker = match ? match[1] : "dummy";
+        return new Response(JSON.stringify({ report: createSampleReport(capturedMarker) }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      mockFetch.mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      mockFetch.mockImplementationOnce(async () => {
+        return new Response(JSON.stringify({ report: createSampleReport(capturedMarker) }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+
+      const result = await verifyProductionPersistence({
+        baseUrl: "http://localhost:3000",
+        allowedOrigins: ["http://localhost:3000"],
+        testAdminKey: dummyTestKey,
+        confirmOptIn: true,
+        fetchFn: mockFetch,
+      });
+
+      expect(result.success).toBe(true);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch.mock.calls[2][1].headers.Authorization).toBe(`Bearer ${dummyTestKey}`);
+    });
   });
 
   describe("CLI Entrypoint & Flag Safety", () => {
@@ -527,12 +644,20 @@ describe("Hardened Production Persistence Verifier", () => {
       expect(allOutput).not.toContain("--key=");
     });
 
-    it("returns exit code 1 and blocks execution if legacy --key argument is passed", async () => {
+    it("returns exit code 1 and blocks execution if CLI credential arguments are passed", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      const code = await runCli(["--key=secret123"]);
+      const code1 = await runCli(["--key=secret123"]);
 
-      expect(code).toBe(1);
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("Security violation: The --key command-line argument has been removed for security."));
+      expect(code1).toBe(1);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("Security violation: Credential command-line arguments are prohibited.")
+      );
+
+      const code2 = await runCli(["--test-key=secret123"]);
+      expect(code2).toBe(1);
+
+      const code3 = await runCli(["--admin-key=secret123"]);
+      expect(code3).toBe(1);
     });
 
     it("returns exit code 1 if --prod is combined with a conflicting --url", async () => {

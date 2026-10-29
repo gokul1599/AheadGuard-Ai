@@ -141,22 +141,24 @@ export function validateTargetOrigin(rawUrl, isProdMode = false, allowedOrigins 
     };
   }
 
-  // Loopback origins are allowed for development/testing
-  if (isLoopbackOrigin(parsed)) {
-    return { valid: true, origin: parsed.origin };
-  }
-
-  // Check custom allowed origins list
+  // Check custom allowed origins list (required for ALL non-production destinations, including loopback)
   const normalizedAllowlist = allowedOrigins.map((o) => {
     try {
       return new URL(o).origin.toLowerCase();
     } catch {
-      return typeof o === "string" ? o.toLowerCase() : "";
+      return typeof o === "string" ? o.trim().toLowerCase() : "";
     }
   });
 
   if (normalizedAllowlist.includes(origin)) {
     return { valid: true, origin: parsed.origin };
+  }
+
+  if (isLoopbackOrigin(parsed)) {
+    return {
+      valid: false,
+      error: "Target origin rejected: loopback origin is not in the approved origin allowlist. Specify --allow-origin to authorize.",
+    };
   }
 
   return {
@@ -278,7 +280,8 @@ async function executeBoundedRequest(url, fetchOptions, stepName, timeoutMs, fet
  *
  * @param {Object} [options]
  * @param {string} [options.baseUrl] - Target API base URL
- * @param {string} [options.adminKey] - Admin key for Authorization: Bearer <key>
+ * @param {string} [options.adminKey] - Production admin key for Authorization: Bearer <key>
+ * @param {string} [options.testAdminKey] - Non-production test admin key for non-production targets
  * @param {boolean} [options.confirmOptIn] - Explicit operator authorization flag
  * @param {boolean} [options.isProd] - Whether targeting production canonical origin
  * @param {string[]} [options.allowedOrigins] - Allowlist for custom test targets
@@ -291,6 +294,7 @@ export async function verifyProductionPersistence(options = {}) {
   const {
     baseUrl: rawBaseUrl,
     adminKey: rawAdminKey,
+    testAdminKey: rawTestAdminKey,
     confirmOptIn = false,
     isProd = false,
     allowedOrigins = [],
@@ -323,21 +327,50 @@ export async function verifyProductionPersistence(options = {}) {
   }
 
   const baseUrl = originValidation.origin;
+  const isProdTarget = isProd || baseUrl.toLowerCase() === CANONICAL_PRODUCTION_ORIGIN.toLowerCase();
 
-  // 3. Validate Administrator Key
-  const adminKey = (rawAdminKey || "").trim();
-  if (!adminKey) {
-    return {
-      success: false,
-      optedIn: true,
-      error:
-        "AHEADGUARD_ADMIN_KEY is required to retrieve the persisted record and verify administrative access.",
-    };
+  // 3. Validate Administrator Key with Strict Credential Isolation
+  let activeKey = "";
+  if (isProdTarget) {
+    const adminKey = (rawAdminKey || process.env.AHEADGUARD_ADMIN_KEY || "").trim();
+    if (!adminKey) {
+      return {
+        success: false,
+        optedIn: true,
+        error: "AHEADGUARD_ADMIN_KEY is required for production persistence verification.",
+      };
+    }
+    activeKey = adminKey;
+  } else {
+    const testKey = (rawTestAdminKey || process.env.AHEADGUARD_TEST_ADMIN_KEY || "").trim();
+    const prodKeyPresent = Boolean((rawAdminKey || process.env.AHEADGUARD_ADMIN_KEY || "").trim());
+
+    if (!testKey) {
+      if (prodKeyPresent) {
+        return {
+          success: false,
+          optedIn: true,
+          error:
+            "Non-production verification targets require AHEADGUARD_TEST_ADMIN_KEY. Production AHEADGUARD_ADMIN_KEY cannot be transmitted to non-production targets.",
+        };
+      }
+      return {
+        success: false,
+        optedIn: true,
+        error: "AHEADGUARD_TEST_ADMIN_KEY is required for non-production persistence verification.",
+      };
+    }
+    activeKey = testKey;
   }
 
   // Secrets list for output/error redaction
-  const secrets = [adminKey];
+  const secrets = [activeKey];
+  if (rawAdminKey) secrets.push(rawAdminKey);
+  if (rawTestAdminKey) secrets.push(rawTestAdminKey);
+  if (process.env.AHEADGUARD_ADMIN_KEY) secrets.push(process.env.AHEADGUARD_ADMIN_KEY);
+  if (process.env.AHEADGUARD_TEST_ADMIN_KEY) secrets.push(process.env.AHEADGUARD_TEST_ADMIN_KEY);
   if (process.env.DATABASE_URL) secrets.push(process.env.DATABASE_URL);
+  if (process.env.MIGRATION_DATABASE_URL) secrets.push(process.env.MIGRATION_DATABASE_URL);
   if (process.env.TINYFISH_API_KEY) secrets.push(process.env.TINYFISH_API_KEY);
 
   const marker = generatePersistenceMarker();
@@ -492,7 +525,7 @@ export async function verifyProductionPersistence(options = {}) {
         method: "GET",
         headers: {
           "Accept": "application/json",
-          "Authorization": `Bearer ${adminKey}`,
+          "Authorization": `Bearer ${activeKey}`,
         },
       },
       "Authenticated record retrieval",
@@ -510,7 +543,7 @@ export async function verifyProductionPersistence(options = {}) {
         investigationId,
         marker,
         error:
-          "Admin authentication failed: server rejected the provided AHEADGUARD_ADMIN_KEY with HTTP 401 Unauthorized.",
+          "Admin authentication failed: server rejected the provided administrative credential with HTTP 401 Unauthorized.",
         details: {
           postStatus: 200,
           unauthGetStatus: 401,
@@ -686,22 +719,35 @@ Options:
   --confirm-live-persistence   Required confirmation to authorize live requests
   --prod                       Target canonical production origin: ${CANONICAL_PRODUCTION_ORIGIN}
   --url=<url>                  Target specific API base URL (must be allowed)
-  --allow-origin=<origin>      Explicitly permit custom target origin (comma-separated or repeatable)
+  --allow-origin=<origin>      Explicitly permit target origin, including loopback (comma-separated or repeatable)
   --timeout=<ms>               Request timeout in milliseconds (default: 15000)
   --help, -h                   Show this help message
 
 Environment Variables:
   RUN_LIVE_PERSISTENCE_TEST    Set to "true" as alternative to --confirm-live-persistence
-  AHEADGUARD_ADMIN_KEY         Administrator Bearer token for record retrieval (required)
+  AHEADGUARD_ADMIN_KEY         Production administrator Bearer token (required for --prod)
+  AHEADGUARD_TEST_ADMIN_KEY    Non-production administrator Bearer token (required for test/local targets)
   PROD_URL                     Alternative base URL (default: ${CANONICAL_PRODUCTION_ORIGIN})
 `);
     return 0;
   }
 
   // Reject removed credential-bearing arguments
-  if (argv.some((a) => a.startsWith("--key=") || a === "--key")) {
-    console.error(`\n[FATAL] Security violation: The --key command-line argument has been removed for security.`);
-    console.error(`Credentials must never be passed via CLI arguments. Configure the AHEADGUARD_ADMIN_KEY environment variable instead.\n`);
+  if (
+    argv.some(
+      (a) =>
+        a.startsWith("--key=") ||
+        a === "--key" ||
+        a.startsWith("--test-key=") ||
+        a === "--test-key" ||
+        a.startsWith("--admin-key=") ||
+        a === "--admin-key"
+    )
+  ) {
+    console.error(`\n[FATAL] Security violation: Credential command-line arguments are prohibited.`);
+    console.error(
+      `Credentials must never be passed via CLI arguments. Configure AHEADGUARD_ADMIN_KEY (production) or AHEADGUARD_TEST_ADMIN_KEY (non-production) environment variables instead.\n`
+    );
     return 1;
   }
 
@@ -755,6 +801,7 @@ Environment Variables:
   }
 
   const adminKey = process.env.AHEADGUARD_ADMIN_KEY;
+  const testAdminKey = process.env.AHEADGUARD_TEST_ADMIN_KEY;
 
   const timeoutArg = argv.find((a) => a.startsWith("--timeout="))?.split("=")[1];
   const timeoutMs = timeoutArg ? parseInt(timeoutArg, 10) : 15000;
@@ -762,6 +809,7 @@ Environment Variables:
   const result = await verifyProductionPersistence({
     baseUrl,
     adminKey,
+    testAdminKey,
     confirmOptIn,
     isProd,
     allowedOrigins,
