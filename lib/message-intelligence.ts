@@ -425,27 +425,27 @@ export function detectSensitiveDataRequests(text: string): SensitiveDataRequestI
   }> = [
     {
       category: "password",
-      requestRegex: /(?:send|share|provide|enter|submit|reply\s+with)\s+(?:your\s+)?password/i,
+      requestRegex: /(?:send|share|provide|enter|submit|reply\s+with)\b(?:(?!\.|\n).)*?\bpassword/i,
       riskExplanation: "Legitimate organizations never ask for your password over email, WhatsApp, or SMS.",
     },
     {
       category: "otp_2fa",
-      requestRegex: /(?:send|share|forward|provide|verify\s+using)\s+(?:the\s+)?(?:otp|one[- ]time[- ]password|verification\s+code|2fa\s+code)/i,
+      requestRegex: /(?:send|share|forward|provide|verify\s+using|reply\s+with)\b(?:(?!\.|\n).)*?(?:otp|one[- ]time[- ]password|verification\s+code|2fa\s+code)/i,
       riskExplanation: "OTPs grant direct access to your accounts. Sharing an OTP allows attackers to hijack your identity or funds.",
     },
     {
       category: "card_details",
-      requestRegex: /(?:enter|provide|send|share)\s+(?:your\s+)?(?:card\s+number|cvv|cvc|card\s+expiry|debit\s+card\s+details|credit\s+card\s+details)/i,
+      requestRegex: /(?:enter|provide|send|share|submit|reply\s+with)\b(?:(?!\.|\n).)*?(?:card\s+number|cvv|cvc|card\s+expiry|debit\s+card\s+details|credit\s+card\s+details)/i,
       riskExplanation: "Requesting raw payment card credentials outside a secure, verified payment gateway exposes you to financial theft.",
     },
     {
       category: "bank_account",
-      requestRegex: /(?:send|share|provide)\s+(?:your\s+)?(?:bank\s+account\s+number|ifsc\s+code|internet\s+banking\s+credentials|atm\s+pin)/i,
-      riskExplanation: "Banking credentials and ATM PINs must never be disclosed through messages or unverified links.",
+      requestRegex: /(?:send|share|provide|enter|submit|reply\s+with)\b(?:(?!\.|\n).)*?(?:bank\s+account(?:\s+number)?|account\s+number|ifsc\s+code|internet\s+banking\s+credentials|banking\s+credentials|atm\s+pin)/i,
+      riskExplanation: "Banking credentials, account numbers, and ATM PINs must never be disclosed through messages or unverified links.",
     },
     {
       category: "government_id",
-      requestRegex: /(?:upload|send|share|email)\s+(?:your\s+)?(?:aadhaar|pan\s+card|passport\s+copy|social\s+security|ssn|driving\s+license)\s+(?:to\s+(?:proceed|complete|receive)|over\s+whatsapp)/i,
+      requestRegex: /(?:upload|send|share|email|submit|reply\s+with|provide)\b(?:(?!\.|\n).)*?(?:aadhaar(?:\s+copy|\s+card|\s+number)?|pan\s+card|passport(?:\s+copy)?|social\s+security(?:\s+card|\s+number)?|ssn|driving\s+license)/i,
       riskExplanation: "Sending government identity documents through unverified communication channels creates severe identity theft risks.",
     },
   ];

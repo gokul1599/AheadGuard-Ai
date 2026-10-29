@@ -126,6 +126,13 @@ describe("Message Intelligence Engine", () => {
       expect(items.some((i) => i.dataCategory === "password")).toBe(true);
     });
 
+    it("detects bank account and aadhaar requests using 'reply with' phrasing", () => {
+      const msg = "Dear applicant, please reply with your bank account number and aadhaar copy.";
+      const items = detectSensitiveDataRequests(msg);
+      expect(items.some((i) => i.dataCategory === "bank_account")).toBe(true);
+      expect(items.some((i) => i.dataCategory === "government_id")).toBe(true);
+    });
+
     it("detects OTP forwarding requests in message text", () => {
       const msg = "Share the OTP sent to your phone to complete your interview confirmation.";
       const items = detectSensitiveDataRequests(msg);
