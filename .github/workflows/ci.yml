@@ -39,5 +39,8 @@ jobs:
       - name: Build Chrome Extension
         run: npm run build:extension
 
+      - name: Run Chromium Extension E2E Acceptance Test
+        run: npm run test:extension:e2e -- --require-browser
+
       - name: Build Next.js application
         run: npm run build
