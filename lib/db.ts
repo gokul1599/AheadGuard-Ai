@@ -265,6 +265,180 @@ export function validateMigrationEndpoint(
   };
 }
 
+export interface MigrationTargetVerificationResult {
+  valid: boolean;
+  targetMatch?: boolean | "uncompared";
+  targetVerified?: boolean;
+  hostname?: string;
+  database?: string;
+  error?: string;
+  warning?: string;
+}
+
+/**
+ * Preflight verification helper to establish whether direct migration endpoint
+ * and application connection endpoint refer to the intended same database target.
+ *
+ * Rules:
+ * 1. Validates migration URL with validateMigrationEndpoint().
+ * 2. If appUrl is supplied, parses and validates appUrl URI structure and PostgreSQL scheme.
+ * 3. Verifies that both URLs target the exact same database (database pathname must match).
+ * 4. For Neon endpoints (*.neon.tech), verifies region and endpoint ID match:
+ *    direct endpoint prefix must match pooled endpoint prefix without '-pooler'.
+ * 5. For non-Neon endpoints, verifies hostname matches.
+ * 6. If target mismatch detected, aborts with specific, actionable error.
+ * 7. If appUrl is absent:
+ *    - if requireTargetMatch === true: fails closed.
+ *    - if requireTargetMatch === false: returns targetMatch: "uncompared" with an advisory warning.
+ * 8. Never leaks credentials, passwords, or tokens in validation messages.
+ */
+export function verifyMigrationTargetIdentity(
+  migrationUrl?: string | null,
+  appUrl?: string | null,
+  options?: { requireTargetMatch?: boolean }
+): MigrationTargetVerificationResult {
+  const migValidation = validateMigrationEndpoint(migrationUrl);
+  if (!migValidation.valid || !migrationUrl) {
+    return {
+      valid: false,
+      targetMatch: false,
+      targetVerified: false,
+      error: migValidation.error || "MIGRATION_DATABASE_URL is invalid.",
+    };
+  }
+
+  let migParsed: URL;
+  try {
+    migParsed = new URL(migrationUrl.trim());
+  } catch {
+    return {
+      valid: false,
+      targetMatch: false,
+      targetVerified: false,
+      error: "Invalid migration connection string: URI syntax is malformed.",
+    };
+  }
+
+  const migHost = migParsed.hostname.toLowerCase();
+  const migDb = migParsed.pathname.replace(/^\//, "").toLowerCase();
+
+  // If application URL is not provided
+  if (!appUrl || typeof appUrl !== "string" || appUrl.trim().length === 0) {
+    if (options?.requireTargetMatch) {
+      return {
+        valid: false,
+        targetMatch: false,
+        targetVerified: false,
+        error:
+          "Target verification failed: application DATABASE_URL was not supplied for preflight comparison. Set requireTargetMatch to false or supply DATABASE_URL to compare.",
+      };
+    }
+    return {
+      valid: true,
+      targetMatch: "uncompared",
+      targetVerified: false,
+      hostname: migHost,
+      database: migDb,
+      warning:
+        "Application DATABASE_URL was not supplied for preflight target comparison. Operator must verify that MIGRATION_DATABASE_URL targets the intended database.",
+    };
+  }
+
+  let appParsed: URL;
+  try {
+    appParsed = new URL(appUrl.trim());
+  } catch {
+    return {
+      valid: false,
+      targetMatch: false,
+      targetVerified: false,
+      error: "Invalid application connection string: URI syntax is malformed.",
+    };
+  }
+
+  if (appParsed.protocol !== "postgres:" && appParsed.protocol !== "postgresql:") {
+    return {
+      valid: false,
+      targetMatch: false,
+      targetVerified: false,
+      error: "Invalid application connection string: scheme must be postgresql: or postgres:.",
+    };
+  }
+
+  const appHost = appParsed.hostname.toLowerCase();
+  const appDb = appParsed.pathname.replace(/^\//, "").toLowerCase();
+
+  // Check database name match
+  if (migDb !== appDb) {
+    return {
+      valid: false,
+      targetMatch: false,
+      targetVerified: false,
+      error: `Migration target mismatch: MIGRATION_DATABASE_URL targets database '${migDb || "default"}' while application DATABASE_URL targets database '${appDb || "default"}'. Migration aborted to prevent modifying the wrong database.`,
+    };
+  }
+
+  // Check Neon-specific project endpoint & region parity
+  if (migHost.endsWith(".neon.tech") && appHost.endsWith(".neon.tech")) {
+    const migParts = migHost.split(".");
+    const appParts = appHost.split(".");
+
+    // Verify domain/region suffix parity (e.g. us-east-2.aws.neon.tech)
+    const migSuffix = migParts.slice(1).join(".");
+    const appSuffix = appParts.slice(1).join(".");
+    if (migSuffix !== appSuffix) {
+      return {
+        valid: false,
+        targetMatch: false,
+        targetVerified: false,
+        error: `Migration target mismatch: MIGRATION_DATABASE_URL region/domain ('${migSuffix}') does not match application DATABASE_URL region/domain ('${appSuffix}'). Migration aborted.`,
+      };
+    }
+
+    // Verify endpoint prefix parity (app prefix without -pooler must equal migration prefix)
+    const migPrefix = migParts[0];
+    const appPrefix = appParts[0];
+    const normalizedAppPrefix = appPrefix.endsWith("-pooler")
+      ? appPrefix.slice(0, -"-pooler".length)
+      : appPrefix;
+
+    if (migPrefix !== normalizedAppPrefix) {
+      return {
+        valid: false,
+        targetMatch: false,
+        targetVerified: false,
+        error: `Migration target mismatch: MIGRATION_DATABASE_URL endpoint ('${migPrefix}') does not match application DATABASE_URL pooled endpoint ('${appPrefix}'). Migration aborted.`,
+      };
+    }
+
+    return {
+      valid: true,
+      targetMatch: true,
+      targetVerified: true,
+      hostname: migHost,
+      database: migDb,
+    };
+  }
+
+  // Generic non-Neon hosts
+  if (migHost === appHost) {
+    return {
+      valid: true,
+      targetMatch: true,
+      targetVerified: true,
+      hostname: migHost,
+      database: migDb,
+    };
+  }
+
+  return {
+    valid: false,
+    targetMatch: false,
+    targetVerified: false,
+    error: `Migration target mismatch: MIGRATION_DATABASE_URL host ('${migHost}') does not match application DATABASE_URL host ('${appHost}'). Migration aborted.`,
+  };
+}
+
 export interface SchemaValidationResult {
   ok: boolean;
   errors: string[];

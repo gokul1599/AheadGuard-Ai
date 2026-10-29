@@ -13,10 +13,15 @@ import {
   validateDatabaseSchema,
   validateDatabaseHealthContract,
   validateMigrationEndpoint,
+  verifyMigrationTargetIdentity,
   SessionQueryClient,
   createSessionSql,
 } from "../lib/db";
-import { validateMigrationEndpoint as validateMigrationEndpointScript } from "../scripts/migrate.mjs";
+import {
+  validateMigrationEndpoint as validateMigrationEndpointScript,
+  verifyMigrationTargetIdentity as verifyMigrationTargetIdentityScript,
+  runMigration,
+} from "../scripts/migrate.mjs";
 import { verifyAdminAuth } from "../lib/api-security";
 import { InvestigationReport } from "../lib/types";
 import { DEMO_SCENARIO_A } from "../lib/demo-data";
@@ -1089,6 +1094,104 @@ describe("Neon Serverless Postgres Integration & Persistence", () => {
         if (prevDbUrl !== undefined) process.env.DATABASE_URL = prevDbUrl;
         else delete process.env.DATABASE_URL;
       }
+    });
+
+    describe("Migration Preflight Target-Identity Verification", () => {
+      const directNeonUrl =
+        "postgresql://user:pass123@ep-sample-12345.us-east-2.aws.neon.tech/neondb?sslmode=require";
+      const pooledNeonUrl =
+        "postgresql://user:pass123@ep-sample-12345-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
+      const mismatchEndpointNeonUrl =
+        "postgresql://user:pass123@ep-different-99999-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require";
+      const mismatchRegionNeonUrl =
+        "postgresql://user:pass123@ep-sample-12345-pooler.eu-central-1.aws.neon.tech/neondb?sslmode=require";
+      const mismatchDbNeonUrl =
+        "postgresql://user:pass123@ep-sample-12345-pooler.us-east-2.aws.neon.tech/otherdb?sslmode=require";
+
+      it("confirms target match when direct and pooled Neon URLs match on project ID, region, and database", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, pooledNeonUrl);
+        expect(res.valid).toBe(true);
+        expect(res.targetMatch).toBe(true);
+        expect(res.targetVerified).toBe(true);
+        expect(res.hostname).toBe("ep-sample-12345.us-east-2.aws.neon.tech");
+        expect(res.database).toBe("neondb");
+      });
+
+      it("rejects migration when target project endpoint ID mismatches between migration and app URLs", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, mismatchEndpointNeonUrl);
+        expect(res.valid).toBe(false);
+        expect(res.targetMatch).toBe(false);
+        expect(res.error).toContain("Migration target mismatch: MIGRATION_DATABASE_URL endpoint");
+        expect(res.error).toContain("does not match application DATABASE_URL pooled endpoint");
+        // Security check: no password leakage
+        expect(res.error).not.toContain("pass123");
+      });
+
+      it("rejects migration when target region mismatches between migration and app URLs", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, mismatchRegionNeonUrl);
+        expect(res.valid).toBe(false);
+        expect(res.targetMatch).toBe(false);
+        expect(res.error).toContain("Migration target mismatch: MIGRATION_DATABASE_URL region/domain");
+        expect(res.error).not.toContain("pass123");
+      });
+
+      it("rejects migration when database name mismatches between migration and app URLs", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, mismatchDbNeonUrl);
+        expect(res.valid).toBe(false);
+        expect(res.targetMatch).toBe(false);
+        expect(res.error).toContain("Migration target mismatch: MIGRATION_DATABASE_URL targets database 'neondb'");
+        expect(res.error).toContain("while application DATABASE_URL targets database 'otherdb'");
+      });
+
+      it("returns uncompared status with advisory warning when application URL is omitted and requireTargetMatch is false", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, null, { requireTargetMatch: false });
+        expect(res.valid).toBe(true);
+        expect(res.targetMatch).toBe("uncompared");
+        expect(res.targetVerified).toBe(false);
+        expect(res.warning).toContain("Application DATABASE_URL was not supplied for preflight target comparison");
+      });
+
+      it("fails closed when application URL is omitted and requireTargetMatch is true", () => {
+        const res = verifyMigrationTargetIdentity(directNeonUrl, null, { requireTargetMatch: true });
+        expect(res.valid).toBe(false);
+        expect(res.targetMatch).toBe(false);
+        expect(res.error).toContain("Target verification failed: application DATABASE_URL was not supplied");
+      });
+
+      it("accepts matching generic hostnames and rejects mismatching generic hostnames", () => {
+        const genericDirect = "postgresql://user:pass@db.internal:5432/appdb";
+        const genericApp = "postgresql://user:pass@db.internal:5432/appdb";
+        const genericMismatch = "postgresql://user:pass@other-db.internal:5432/appdb";
+
+        const resMatch = verifyMigrationTargetIdentity(genericDirect, genericApp);
+        expect(resMatch.valid).toBe(true);
+        expect(resMatch.targetVerified).toBe(true);
+
+        const resMismatch = verifyMigrationTargetIdentity(genericDirect, genericMismatch);
+        expect(resMismatch.valid).toBe(false);
+        expect(resMismatch.error).toContain("Migration target mismatch: MIGRATION_DATABASE_URL host");
+      });
+
+      it("guarantees validator parity between lib/db and scripts/migrate.mjs for target identity", () => {
+        expect(verifyMigrationTargetIdentityScript(directNeonUrl, pooledNeonUrl)).toEqual(
+          verifyMigrationTargetIdentity(directNeonUrl, pooledNeonUrl)
+        );
+        expect(verifyMigrationTargetIdentityScript(directNeonUrl, mismatchEndpointNeonUrl)).toEqual(
+          verifyMigrationTargetIdentity(directNeonUrl, mismatchEndpointNeonUrl)
+        );
+        expect(verifyMigrationTargetIdentityScript(directNeonUrl, null)).toEqual(
+          verifyMigrationTargetIdentity(directNeonUrl, null)
+        );
+      });
+
+      it("runMigration preflight blocks execution and aborts with code when targets mismatch", async () => {
+        const res = await runMigration({
+          connectionString: directNeonUrl,
+          appConnectionString: mismatchEndpointNeonUrl,
+        });
+        expect(res.success).toBe(false);
+        expect(res.error).toContain("Migration target mismatch");
+      });
     });
   });
 });
