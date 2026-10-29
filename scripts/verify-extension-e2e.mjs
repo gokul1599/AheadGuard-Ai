@@ -134,6 +134,13 @@ async function waitForCondition(ws, conditionExpr, desc = "DOM condition", maxWa
     }
     await sleep(250);
   }
+  const debugInfo = await runCdpCommand(ws, "Runtime.evaluate", {
+    expression: `JSON.stringify({ href: window.location.href, readyState: document.readyState, title: document.title, hasElement: Boolean(document.getElementById("active-url-display")) })`,
+    returnByValue: true,
+  }).catch(() => null);
+  if (debugInfo?.result?.value) {
+    console.error("  [DEBUG] Page state at timeout:", debugInfo.result.value);
+  }
   throw new Error(
     `Timed out waiting for ${desc} (${maxWaitMs}ms)${lastErr ? ` [last CDP error: ${lastErr}]` : ""}`
   );
@@ -450,7 +457,7 @@ async function main() {
     const popupUrl = `chrome-extension://${extId}/popup.html`;
     const popupRes = await fetch(`http://127.0.0.1:${port}/json/new?${popupUrl}`, { method: "PUT" });
     const popupTab = await popupRes.json();
-    console.log(`  ✓ Popup tab initialized: ${popupTab.id}`);
+    console.log(`  ✓ Popup tab initialized: ${popupTab.id} (url="${popupTab.url}")`);
 
     const ws = new WebSocket(popupTab.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => {
@@ -458,8 +465,13 @@ async function main() {
       ws.on("error", reject);
     });
     console.log("  ✓ WebSocket connected to popup DevTools target.");
+    await runCdpCommand(ws, "Page.enable");
     await runCdpCommand(ws, "Runtime.enable");
-    await sleep(600);
+    if (!popupTab.url || popupTab.url === "about:blank" || popupTab.url !== popupUrl) {
+      console.log(`  Navigating popup target to ${popupUrl}...`);
+      await runCdpCommand(ws, "Page.navigate", { url: popupUrl });
+    }
+    await sleep(800);
 
     // -------------------------------------------------------------------------
     // STAGE 8: Verify Active Tab Detection & Initial Popup State
