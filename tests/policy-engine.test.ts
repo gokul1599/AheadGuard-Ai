@@ -2312,5 +2312,38 @@ describe("Benchmark Overhaul: False-Positive Elimination, Phishing Detection & P
     expect(report.evidenceItems.some((f) => f.label === "Authentic Sign-in Form Observed")).toBe(true);
     expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
   });
+
+  it("ChatGPT conversations protected by Cloudflare Turnstile resolve to Low observed risk on verified official domain", () => {
+    const url = new URL("https://chatgpt.com/c/6ae2115d-739c-83ee-b8b5-dc3701516d16");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 4,
+      rawAgentText: "Cloudflare Turnstile verification challenge observed on official ChatGPT domain.",
+      structuredResult: {
+        page_title: "Verify you are human - ChatGPT",
+        observed_final_url: "https://chatgpt.com/c/6ae2115d-739c-83ee-b8b5-dc3701516d16",
+        claimed_organization: "OpenAI (ChatGPT)",
+        visible_purpose: "Cloudflare Turnstile bot verification interstitial for ChatGPT conversation",
+        credential_or_payment_request: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "Domain is chatgpt.com, matching official OpenAI ChatGPT domain",
+          "HTTPS is active for the connection",
+        ],
+        checks_performed: ["Identified Cloudflare challenge", "Verified domain certificate"],
+        unknowns: ["Cloudflare human verification challenge encountered on crawler session"],
+        overall_observation: "Standard Cloudflare anti-bot security challenge on official ChatGPT service.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Official Brand Anti-Bot Security Perimeter")).toBe(true);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
+  });
 });
 

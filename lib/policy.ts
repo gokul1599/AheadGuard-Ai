@@ -2138,17 +2138,42 @@ export function assessInvestigation(params: {
     recommendedAction = "Do not proceed until you verify this destination through an independent, trusted channel.";
     missingEvidence.push("Complete live page inspection could not be finished.");
   }
-  // Policy Rule 1b: Access Blocked by Anti-Bot Perimeter or Incomplete Page Inspection -> MANDATORY UNKNOWN
+  // Policy Rule 1b: Access Blocked by Anti-Bot Perimeter or Incomplete Page Inspection
   // If the destination URL itself exhibits definitive threat markers (e.g. lookalike brand, unencrypted HTTP, IP host),
   // those threats take precedence over the anti-bot interstitial.
+  // If the destination is an officially verified brand domain with clean signals, the anti-bot challenge
+  // is recognized as standard defensive bot protection by the verified provider.
   else if (hasAntiBotChallenge && !hasIndependentUrlThreat) {
-    riskOutcome = "Unknown";
-    threatLikelihood = "Uncertain";
-    outcomeReason =
-      "The destination page could not be inspected because access was blocked by an automated anti-bot security challenge or network perimeter. Missing evidence cannot be treated as safe.";
-    recommendedAction =
-      "The destination could not be inspected due to automated security barriers. Visit only if you independently know and trust this domain.";
-    missingEvidence.push("Complete live page inspection could not be completed (access blocked by anti-bot challenge).");
+    if (
+      brandAffiliation.isOfficialDomain &&
+      warningSigns.length === 0 &&
+      !isHttp &&
+      !hasPunycode &&
+      !isNumericIp &&
+      (!destinationChanged ||
+        isAffiliatedRedirection(submittedHost, finalHost || submittedHost) ||
+        isSameRegistrableDomain(submittedHost, finalHost || submittedHost))
+    ) {
+      evidenceItems.push({
+        label: "Official Brand Anti-Bot Security Perimeter",
+        detail: `The destination is confirmed as ${brandAffiliation.canonicalBrand}'s verified official domain (${submittedHost}). The observed anti-bot security challenge is standard bot protection operated by this service.`,
+        kind: "positive",
+        provenance: "policy_rule",
+      });
+      riskOutcome = "Low observed risk";
+      threatLikelihood = "Low";
+      consequenceImpact = "Low";
+      outcomeReason = `Verified official domain for ${brandAffiliation.canonicalBrand}. Anti-bot challenges encountered are standard security perimeters operated by this service.`;
+      recommendedAction = `Routine web browsing on ${brandAffiliation.canonicalBrand}'s verified domain.`;
+    } else {
+      riskOutcome = "Unknown";
+      threatLikelihood = "Uncertain";
+      outcomeReason =
+        "The destination page could not be inspected because access was blocked by an automated anti-bot security challenge or network perimeter. Missing evidence cannot be treated as safe.";
+      recommendedAction =
+        "The destination could not be inspected due to automated security barriers. Visit only if you independently know and trust this domain.";
+      missingEvidence.push("Complete live page inspection could not be completed (access blocked by anti-bot challenge).");
+    }
   }
   // Policy Rule 1c: Dormant, Parked, or Suspended Placeholder Destination -> MANDATORY UNKNOWN
   else if (isDormantPage) {
