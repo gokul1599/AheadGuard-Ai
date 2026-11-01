@@ -148,6 +148,16 @@ export class DiscordAdapter extends BaseIntegrationAdapter {
     const rawText = String(targetOption?.value || data.name || "");
 
     const extractedUrls = this.extractUrls(rawText);
+    const cmd = (data.name || "check").toLowerCase();
+    let category: import("./types").InputCategory = extractedUrls.length > 0 ? "url" : "message";
+
+    if (cmd === "offer" || cmd === "checkoffer") {
+      category = "job_offer";
+    } else if (cmd === "payment" || cmd === "checkpayment") {
+      category = "payment_screenshot";
+    } else if (cmd === "website" || cmd === "checklink") {
+      category = "url";
+    }
 
     return {
       eventId: `discord_${payload.id || Date.now()}`,
@@ -159,9 +169,10 @@ export class DiscordAdapter extends BaseIntegrationAdapter {
       rawText,
       extractedUrls,
       extractedEntities: {
-        command: [data.name || "check"],
+        command: [cmd],
+        commands: [cmd],
       },
-      inputCategory: extractedUrls.length > 0 ? "url" : "message",
+      inputCategory: category,
       metadata: {
         guildId: payload.guild_id,
         channelId: payload.channel_id,

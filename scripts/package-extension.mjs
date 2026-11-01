@@ -6,14 +6,17 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync, readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const extensionDir = resolve(rootDir, "extension");
-const zipName = "aheadguard-extension-v2.1.0.zip";
+
+const manifest = JSON.parse(readFileSync(resolve(extensionDir, "manifest.json"), "utf8"));
+const version = manifest.version || "3.0.0";
+const zipName = `aheadguard-extension-v${version}.zip`;
 const zipPath = resolve(rootDir, zipName);
 
 console.log("==> Step 1: Compiling extension bundles with esbuild...");

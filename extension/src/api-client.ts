@@ -227,3 +227,30 @@ export async function investigateUrl(options: CheckOptions): Promise<Investigati
     return createUnknownReport(fallbackTarget, cleanMsg);
   }
 }
+
+/**
+ * Investigates a job or internship offer directly through the Offer Integrity API.
+ */
+export async function investigateOffer(
+  offerMessage: string,
+  backendUrl: string = DEFAULT_BACKEND_URL
+): Promise<import("../../lib/offer-integrity/types").OfferIntegrityReport> {
+  const endpoint = `${backendUrl.replace(/\/+$/, "")}/api/offer-integrity`;
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ offerMessage }),
+  });
+
+  if (!res.ok) {
+    const errorText = await res.text().catch(() => "");
+    throw new Error(sanitizeClientMessage(`HTTP ${res.status}: ${errorText}`));
+  }
+
+  const data = await res.json();
+  if (!data.ok || !data.report) {
+    throw new Error(sanitizeClientMessage(data.error || "Investigation report missing from response."));
+  }
+
+  return data.report;
+}

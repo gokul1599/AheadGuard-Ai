@@ -12,6 +12,7 @@ import { XAdapter } from "./x-adapter";
 import { EmailAdapter } from "./email-adapter";
 import { LinkedInAdapter } from "./linkedin-adapter";
 import { TikTokAdapter } from "./tiktok-adapter";
+import { MobileShareAdapter } from "./mobile-adapter";
 
 export class IntegrationRegistry {
   private static instance?: IntegrationRegistry;
@@ -26,6 +27,7 @@ export class IntegrationRegistry {
     this.registerAdapter(new EmailAdapter());
     this.registerAdapter(new LinkedInAdapter());
     this.registerAdapter(new TikTokAdapter());
+    this.registerAdapter(new MobileShareAdapter());
   }
 
   public static getInstance(): IntegrationRegistry {

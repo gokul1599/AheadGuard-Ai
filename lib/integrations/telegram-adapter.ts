@@ -6,6 +6,7 @@ import {
   WebhookVerificationResult,
   NormalizedPlatformEvent,
 } from "./types";
+import type { OfferIntegrityReport } from "@/lib/offer-integrity/types";
 
 interface TelegramUpdatePayload {
   message?: {
@@ -156,7 +157,9 @@ export class TelegramAdapter extends BaseIntegrationAdapter {
         effectiveCategory = "qr_code";
       } else if (cmd === "/checkcompany" || cmd === "/company") {
         effectiveCategory = "company_claim";
-      } else if (cmd === "/checklink" || cmd === "/link" || extractedUrls.length > 0) {
+      } else if (cmd === "/payment" || cmd === "/checkpayment") {
+        effectiveCategory = "payment_screenshot";
+      } else if (cmd === "/website" || cmd === "/checklink" || cmd === "/link" || extractedUrls.length > 0) {
         effectiveCategory = "url";
       } else {
         effectiveCategory = extractedUrls.length > 0 ? "url" : "message";
@@ -211,5 +214,71 @@ export class TelegramAdapter extends BaseIntegrationAdapter {
     const reasonBullets = verdict.reasons.map((r) => `• ${r}`).join("\n");
 
     return `${badge}\n*Target:* \`${verdict.target}\`\n\n*Observable Findings:*\n${reasonBullets}\n\n*Action Preview:*\n${verdict.safeAction}\n\n_Checked by AheadGuard AI_`;
+  }
+
+  /**
+   * Helper to format an AheadGuard Offer Integrity Report into an evidence-backed Telegram Markdown message.
+   * Prominently highlights the core principle: THE INTERNSHIP CAN BE REAL WHILE THE PAYMENT REQUEST IS FALSE.
+   */
+  formatTelegramOfferReply(report: OfferIntegrityReport): string {
+    const badge =
+      report.riskOutcome === "High risk"
+        ? "🔴 *HIGH RISK OFFER TRAP*"
+        : report.riskOutcome === "Suspicious"
+        ? "🟡 *SUSPICIOUS RECRUITMENT OFFER*"
+        : "🟢 *VERIFIED RECRUITMENT OFFER*";
+
+    const company = report.offerBreakdown.vacancy.companyName;
+    const role = report.offerBreakdown.vacancy.roleTitle;
+    const vacancyStatus = report.offerBreakdown.vacancy.vacancyStatus === "SUPPORTED" ? "✅ SUPPORTED (Active listing found)" : "⚠️ UNVERIFIED";
+    const paymentStatus = report.offerBreakdown.payment.paymentStatus === "CONTRADICTED" ? "❌ CONTRADICTED (Illegal upfront fee)" : "✅ NO FEE DEMANDED";
+    const senderStatus =
+      report.offerBreakdown.sender.affiliationStatus === "SUPPORTED" ||
+      report.offerBreakdown.sender.affiliationStatus === "VERIFIED"
+        ? "✅ VERIFIED CORPORATE DOMAIN"
+        : "⚠️ UNVERIFIED (Consumer email domain)";
+
+    const primaryRec = report.safeActionPlan.keyRecommendation;
+    const verifiedUrl = report.safeActionPlan.verifiedApplicationRoute;
+
+    return (
+      `${badge}\n\n` +
+      `⚡ *CRITICAL PRINCIPLE:*\n` +
+      `_The internship can be real while the payment request is false._\n\n` +
+      `🏢 *Claimed Employer:* ${company}\n` +
+      `💼 *Role:* ${role}\n` +
+      `📋 *Vacancy Listing:* ${vacancyStatus}\n` +
+      `💳 *Payment Demand:* ${paymentStatus}\n` +
+      `👤 *Recruiter Affiliation:* ${senderStatus}\n\n` +
+      `🔍 *Evidence Summary:*\n` +
+      `• ${report.overallAssessment.verdictSummary}\n` +
+      `• ${report.overallAssessment.strongestEvidence}\n\n` +
+      `🛡️ *Safe Action Plan:*\n` +
+      `• ${primaryRec}\n` +
+      (verifiedUrl ? `• Official Careers: ${verifiedUrl}\n` : "") +
+      `\n_Checked by AheadGuard AI Offer Integrity Engine_`
+    );
+  }
+
+  /**
+   * Dispatches a message to a Telegram chat via Telegram Bot API.
+   */
+  async deliverTelegramMessage(chatId: string | number, text: string): Promise<boolean> {
+    if (!this.botToken) return false;
+
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          parse_mode: "Markdown",
+        }),
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
   }
 }

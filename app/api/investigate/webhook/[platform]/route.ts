@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { IntegrationRegistry } from "@/lib/integrations/registry";
 import { PlatformType } from "@/lib/integrations/types";
-import { InvestigationOrchestrator } from "@/lib/orchestrator/investigation-orchestrator";
 import { TelegramAdapter } from "@/lib/integrations/telegram-adapter";
+import { JobStore } from "@/lib/jobs/job-store";
+import { DurableWorker } from "@/lib/jobs/durable-worker";
 
 export const runtime = "nodejs";
 
@@ -30,7 +31,7 @@ export async function GET(
   return new Response("Webhook verification failed.", { status: 403 });
 }
 
-// POST handler for inbound platform events
+// POST handler for inbound platform events (Durable execution pipeline)
 export async function POST(
   request: Request,
   context: { params: Promise<{ platform: string }> }
@@ -56,61 +57,104 @@ export async function POST(
   try {
     const jsonPayload = rawBody ? JSON.parse(rawBody) : {};
 
-    // Discord Endpoint Registration Challenge (PING -> PONG)
+    // 1. Discord Endpoint Registration Challenge (PING -> PONG)
     if (platform === "discord" && jsonPayload.type === 1) {
       return NextResponse.json({ type: 1 });
     }
 
-    // Normalize event through the platform adapter
+    // 2. Normalize event through the platform adapter
     const normalizedEvent = await adapter.normalizeEvent(jsonPayload);
 
-    // Dispatch to the Central Investigation Orchestrator
-    const orchestrator = InvestigationOrchestrator.getInstance();
-    const investigationId = `inv_${platform}_${Date.now()}`;
+    // 3. Construct deterministic idempotency key to prevent double execution on webhook retries
+    const idempotencyKey =
+      platform === "telegram"
+        ? `tg_upd_${jsonPayload.update_id || normalizedEvent.eventId}`
+        : platform === "discord"
+        ? `discord_int_${jsonPayload.id || normalizedEvent.eventId}`
+        : `${platform}_evt_${normalizedEvent.eventId}`;
 
-    const result = await orchestrator.orchestrateInvestigation({
-      investigationId,
-      userId: normalizedEvent.senderIdentifier || "webhook_user",
-      sourcePlatform: adapter.platform,
-      inputCategory: normalizedEvent.inputCategory,
-      rawInput: normalizedEvent.rawText || "",
-      messageText: normalizedEvent.rawText,
-      targetUrl: normalizedEvent.extractedUrls[0],
-      hasExplicitUserConsent: true,
-      timestamp: normalizedEvent.receivedAt,
+    // 4. Enqueue durable investigation job
+    const jobStore = JobStore.getInstance();
+    const command = normalizedEvent.extractedEntities.commands?.[0];
+
+    const { job, isDuplicate } = await jobStore.enqueueJob({
+      idempotencyKey,
+      platform: adapter.platform,
+      senderId: normalizedEvent.senderIdentifier || "webhook_user",
+      sourceAccountId: normalizedEvent.sourceAccountId || "default_channel",
+      payload: {
+        inputCategory: normalizedEvent.inputCategory,
+        rawInput: normalizedEvent.rawText || "",
+        messageText: normalizedEvent.rawText,
+        targetUrl: normalizedEvent.extractedUrls[0],
+        command,
+        senderHandle: normalizedEvent.senderHandle,
+        senderDisplayName: normalizedEvent.senderDisplayName,
+        metadata: normalizedEvent.metadata,
+      },
     });
 
-    // Platform-specific response formatting
+    // 5. Execute job through Durable Worker
+    const worker = DurableWorker.getInstance();
+    const execution = await worker.executeJob(job);
+
+    // 6. Platform-specific synchronous webhook replies
     if (platform === "telegram" && adapter instanceof TelegramAdapter) {
-      const telegramText = adapter.formatTelegramReply({
-        riskOutcome: result.riskOutcome,
-        target: normalizedEvent.extractedUrls[0] || normalizedEvent.rawText?.slice(0, 50) || "Message",
-        reasons: result.report.warningSigns.slice(0, 3),
-        safeAction: result.safeActionPlan.safeAlternative,
-      });
+      let replyText = "";
+      if (execution.result?.type === "system") {
+        replyText = execution.result.message;
+      } else if (execution.result?.type === "offer") {
+        replyText = adapter.formatTelegramOfferReply(execution.result.report);
+      } else if (execution.result?.type === "standard") {
+        replyText = adapter.formatTelegramReply({
+          riskOutcome: execution.result.riskOutcome,
+          target: normalizedEvent.extractedUrls[0] || normalizedEvent.rawText?.slice(0, 50) || "Message",
+          reasons: execution.result.report.warningSigns.slice(0, 3),
+          safeAction: execution.result.safeAction,
+        });
+      } else {
+        replyText = "⚠️ Unable to complete investigation. Please try again later.";
+      }
 
       return NextResponse.json({
         method: "sendMessage",
         chat_id: normalizedEvent.sourceAccountId,
-        text: telegramText,
+        text: replyText,
         parse_mode: "Markdown",
       });
     }
 
     if (platform === "discord") {
-      // Discord Interaction Response
+      let content = "";
+      if (execution.result?.type === "offer") {
+        content =
+          `**[AheadGuard AI Offer Integrity]**\n` +
+          `Outcome: **${execution.result.riskOutcome}**\n` +
+          `*Company:* ${execution.result.report.offerBreakdown.vacancy.companyName}\n` +
+          `*Summary:* ${execution.result.outcomeReason}\n` +
+          `*Safe Action:* ${execution.result.safeAction}`;
+      } else if (execution.result?.type === "standard") {
+        content =
+          `**[AheadGuard AI Verification]**\n` +
+          `Outcome: **${execution.result.riskOutcome}**\n` +
+          `${execution.result.outcomeReason}\n` +
+          `*Safe Action:* ${execution.result.safeAction}`;
+      } else {
+        content = execution.result?.type === "system" ? execution.result.message : "AheadGuard verified.";
+      }
+
       return NextResponse.json({
         type: 4, // CHANNEL_MESSAGE_WITH_SOURCE
-        data: {
-          content: `**[AheadGuard AI Verification]**\nOutcome: **${result.riskOutcome}**\n${result.outcomeReason}\n*Safe Action:* ${result.safeActionPlan.safeAlternative}`,
-        },
+        data: { content },
       });
     }
 
     return NextResponse.json({
       ok: true,
-      investigationId,
-      result,
+      jobId: job.id,
+      isDuplicate,
+      status: execution.status,
+      result: execution.result,
     });
   } catch (error) {
     return NextResponse.json(
