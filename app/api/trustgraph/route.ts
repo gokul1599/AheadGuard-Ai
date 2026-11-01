@@ -1,26 +1,26 @@
 import { NextResponse } from "next/server";
 import { TrustGraphStore } from "@/lib/trustgraph/graph-store";
-import { isAllowedOrigin, checkRateLimit, getClientIp } from "@/lib/api-security";
+import {
+  isAllowedOrigin,
+  checkRateLimit,
+  getClientIp,
+  createCorsHeaders,
+  createCorsForbiddenResponse,
+} from "@/lib/api-security";
 
 export const runtime = "nodejs";
 
 function getCorsHeaders(request: Request): Record<string, string> {
-  const origin = request.headers.get("origin");
-  if (origin && isAllowedOrigin(origin)) {
-    return {
-      "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Accept",
-      "Vary": "Origin",
-    };
-  }
-  return { Vary: "Origin" };
+  return createCorsHeaders(request, "GET, OPTIONS");
 }
 
 export async function OPTIONS(request: Request) {
   const origin = request.headers.get("origin");
-  if (!origin || !isAllowedOrigin(origin)) {
-    return new Response("CORS origin not allowed.", { status: 403 });
+  if (!origin) {
+    return createCorsForbiddenResponse(request, "OPTIONS preflight request missing Origin header.");
+  }
+  if (!isAllowedOrigin(origin, request)) {
+    return createCorsForbiddenResponse(request, `Origin '${origin}' is not authorized by AheadGuard security policy.`);
   }
   return new Response(null, {
     status: 204,
@@ -33,8 +33,8 @@ export async function OPTIONS(request: Request) {
 
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && !isAllowedOrigin(origin)) {
-    return new Response("CORS origin not allowed.", { status: 403 });
+  if (origin && !isAllowedOrigin(origin, request)) {
+    return createCorsForbiddenResponse(request, `Origin '${origin}' is not authorized.`);
   }
 
   const clientIp = getClientIp(request);

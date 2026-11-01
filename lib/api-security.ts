@@ -9,6 +9,102 @@ import { isIP } from "node:net";
  */
 
 export const PRODUCTION_DASHBOARD_ORIGIN = "https://aheadguard-ai.vercel.app";
+export const CANONICAL_PRODUCTION_ORIGIN = PRODUCTION_DASHBOARD_ORIGIN;
+
+/**
+ * Normalizes an origin string into its canonical `scheme://hostname[:port]` representation.
+ * - Parses via URL constructor
+ * - Extracts exact protocol (lowercase), hostname (lowercase), and port (omits default 80/443)
+ * - Returns null for malformed, non-hierarchical, or invalid origins.
+ * - Handles custom schemes (e.g. capacitor://localhost, ionic://localhost) safely.
+ */
+export function normalizeOrigin(origin: string | null | undefined): string | null {
+  if (!origin || typeof origin !== "string") return null;
+  const trimmed = origin.trim();
+  if (!trimmed || trimmed === "null") return null;
+
+  // Reject wildcards, whitespace, or relative paths immediately
+  if (trimmed === "*" || /\s/.test(trimmed) || trimmed.startsWith("/")) {
+    return null;
+  }
+
+  // Handle Chrome extension origins: chrome-extension://<32-letter-id>
+  if (trimmed.startsWith("chrome-extension://")) {
+    const rawId = trimmed.replace("chrome-extension://", "").replace(/\/.*$/, "").toLowerCase();
+    return /^[a-z]{32}$/.test(rawId) ? `chrome-extension://${rawId}` : null;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const protocol = parsed.protocol.toLowerCase();
+    const hostname = parsed.hostname.toLowerCase();
+    const port = parsed.port;
+
+    // Supported schemes: http, https, capacitor, ionic
+    if (!["http:", "https:", "capacitor:", "ionic:"].includes(protocol)) {
+      return null;
+    }
+
+    if (!hostname) return null;
+
+    // Reject wildcards or invalid characters in host
+    if (hostname.includes("*") || hostname.includes("/") || hostname.includes("\\")) {
+      return null;
+    }
+
+    // Default ports: omit :80 for http and :443 for https
+    const isDefaultPort = (protocol === "http:" && port === "80") || (protocol === "https:" && port === "443");
+    const formattedPort = port && !isDefaultPort ? `:${port}` : "";
+
+    return `${protocol}//${hostname}${formattedPort}`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Retrieves the set of explicitly approved web and app origins from:
+ * 1. The canonical production origin: https://aheadguard-ai.vercel.app
+ * 2. Explicitly configured ALLOWED_APP_ORIGINS (comma-separated list from environment)
+ * 3. Environment variables VERCEL_URL and NEXT_PUBLIC_APP_URL
+ */
+export function getAllowedOrigins(): Set<string> {
+  const allowed = new Set<string>();
+
+  // 1. Canonical production origin
+  const canonical = normalizeOrigin(PRODUCTION_DASHBOARD_ORIGIN);
+  if (canonical) allowed.add(canonical);
+
+  // 2. Origins from ALLOWED_APP_ORIGINS environment variable
+  const rawAppOrigins = process.env.ALLOWED_APP_ORIGINS || "";
+  if (rawAppOrigins.trim()) {
+    const splitOrigins = rawAppOrigins
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    for (const raw of splitOrigins) {
+      const normalized = normalizeOrigin(raw);
+      if (normalized) {
+        allowed.add(normalized);
+      }
+    }
+  }
+
+  // 3. VERCEL_URL support (set by Vercel in preview/branch deployments)
+  if (process.env.VERCEL_URL) {
+    const vercelOrigin = normalizeOrigin(`https://${process.env.VERCEL_URL}`);
+    if (vercelOrigin) allowed.add(vercelOrigin);
+  }
+
+  // 4. NEXT_PUBLIC_APP_URL support
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    const appUrlOrigin = normalizeOrigin(process.env.NEXT_PUBLIC_APP_URL);
+    if (appUrlOrigin) allowed.add(appUrlOrigin);
+  }
+
+  return allowed;
+}
 
 /**
  * Retrieves the set of explicitly approved Chrome Extension IDs from the environment.
@@ -26,34 +122,100 @@ export function getAllowedExtensionIds(): Set<string> {
 
 /**
  * Validates request Origin against the strict AheadGuard allowlist:
- * 1. Exact production dashboard origin (https://aheadguard-ai.vercel.app)
- * 2. Explicit local development origins (http://localhost:*, http://127.0.0.1:*)
+ * 1. Exact canonical production dashboard origin (https://aheadguard-ai.vercel.app)
+ * 2. Explicitly configured ALLOWED_APP_ORIGINS (e.g. iOS WebViews, custom app schemes)
  * 3. Approved Chrome Extension IDs matching ALLOWED_EXTENSION_IDS in 32-letter lowercase format.
+ * 4. Explicit local development origins (http://localhost:*, http://127.0.0.1:*)
+ * 5. Same-Origin verification: If request is provided, safely checks if origin matches request host.
  *
- * Missing or unrecognized origins are never treated as authorized browser origins.
+ * Requirements:
+ * - Scheme, hostname, and port are normalized and compared exactly.
+ * - Wildcard origins are NEVER permitted.
+ * - Arbitrary origin reflection is NEVER permitted.
+ * - "null" origin is strictly rejected.
+ * - Missing origin is handled safely (not treated as an authorized cross-origin browser).
  */
-export function isAllowedOrigin(origin: string | null): boolean {
+export function isAllowedOrigin(origin: string | null | undefined, request?: Request): boolean {
   if (!origin || typeof origin !== "string") return false;
+  if (origin === "null") return false; // Strict rejection of null origins
 
-  // Exact production dashboard origin
-  if (origin === PRODUCTION_DASHBOARD_ORIGIN) return true;
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return false;
 
-  // Explicitly permitted local development origins
-  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  // 1. Check Chrome Extension allowlist
+  if (normalized.startsWith("chrome-extension://")) {
+    const extensionId = normalized.replace("chrome-extension://", "").toLowerCase();
+    const allowedExtensions = getAllowedExtensionIds();
+    return allowedExtensions.has(extensionId);
+  }
 
-  // Strict Chrome Extension allowlist: must be syntactically valid AND explicitly whitelisted
-  if (origin.startsWith("chrome-extension://")) {
-    const extensionId = origin.replace("chrome-extension://", "").replace(/\/.*$/, "").toLowerCase();
-    // Reject malformed extension IDs immediately
-    if (!/^[a-z]{32}$/.test(extensionId)) {
-      return false;
+  // 2. Check explicitly configured and canonical origins
+  const allowedSet = getAllowedOrigins();
+  if (allowedSet.has(normalized)) {
+    return true;
+  }
+
+  // 3. Localhost / Loopback development origins
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(normalized)) {
+    return true;
+  }
+
+  // 4. Same-origin comparison if request is available:
+  // If the browser is on the same host that is serving the request (e.g. a preview deployment or custom domain)
+  if (request) {
+    const hostHeader = request.headers.get("x-forwarded-host") || request.headers.get("host");
+    const protoHeader = request.headers.get("x-forwarded-proto") || "https";
+    if (hostHeader) {
+      const sameOrigin = normalizeOrigin(`${protoHeader}://${hostHeader}`);
+      if (sameOrigin && sameOrigin === normalized) {
+        return true;
+      }
     }
-    // Fail safely: only explicitly approved AheadGuard extension IDs are accepted
-    const allowed = getAllowedExtensionIds();
-    return allowed.has(extensionId);
   }
 
   return false;
+}
+
+/**
+ * Generates CORS headers for authorized origins.
+ * Never uses wildcard "*". Only reflects explicitly validated, normalized origins.
+ */
+export function createCorsHeaders(request: Request, allowedMethods: string = "GET, POST, OPTIONS"): Record<string, string> {
+  const origin = request.headers.get("origin");
+  if (origin && isAllowedOrigin(origin, request)) {
+    const normalized = normalizeOrigin(origin) || origin;
+    return {
+      "Access-Control-Allow-Origin": normalized,
+      "Access-Control-Allow-Methods": allowedMethods,
+      "Access-Control-Allow-Headers": "Content-Type, Accept, Authorization, X-Requested-With",
+      "Vary": "Origin",
+    };
+  }
+  return {
+    "Vary": "Origin",
+  };
+}
+
+/**
+ * Returns a structured JSON HTTP 403 Response for rejected CORS origins.
+ * Provides safe, actionable diagnostic information without leaking secrets.
+ */
+export function createCorsForbiddenResponse(request: Request, reason: string = "Origin is not authorized by AheadGuard security policy."): Response {
+  void request;
+  return new Response(
+    JSON.stringify({
+      error: `CORS origin not allowed: ${reason}`,
+      code: "CORS_ORIGIN_DENIED",
+      hint: "Your browser or app origin is not authorized to access AheadGuard API. For iOS WebViews or custom domains, configure ALLOWED_APP_ORIGINS.",
+    }),
+    {
+      status: 403,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Vary": "Origin",
+      },
+    }
+  );
 }
 
 /**

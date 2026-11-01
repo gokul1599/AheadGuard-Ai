@@ -142,7 +142,7 @@ export function redactSensitivePii(text: string): { redactedText: string; redact
 
   // 8. Passwords, Credentials, and Secret Keys declared in text
   const credentialRegex =
-    /(?:password|passwd|pwd|passcode|secret[-_ ]key|api[-_ ]key|access[-_ ]token|private[-_ ]key)\s*(?:is\s+|:\s*|=\s*|\s+)([^\s,.;]+)/gi;
+    /(?:password|passwd|pwd|passcode|secret[-_ ]key|secret[-_ ]token|api[-_ ]key|access[-_ ]token|auth[-_ ]token|private[-_ ]key|token)\s*(?:is\s+|:\s*|=\s*|\s+)([^\s,.;]+)/gi;
   if (credentialRegex.test(current)) {
     redactions.push("Password / credential redacted");
     current = current.replace(credentialRegex, (match, credVal) => {

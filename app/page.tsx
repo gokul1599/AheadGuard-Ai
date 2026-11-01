@@ -99,6 +99,7 @@ export default function Home() {
   const [detectedUrls, setDetectedUrls] = useState<string[]>([]);
   const [selectedMultiUrl, setSelectedMultiUrl] = useState<string>("");
   const [pendingMessagePayload, setPendingMessagePayload] = useState<Record<string, unknown> | null>(null);
+  const [lastPayload, setLastPayload] = useState<Record<string, unknown> | null>(null);
 
   // Share report modal state
   const [showShareModal, setShowShareModal] = useState(false);
@@ -287,6 +288,7 @@ export default function Home() {
     setShowRaw(false);
     setProgressLog([]);
     setLoading(true);
+    setLastPayload(payload);
     setStatus("Initiating AheadGuard investigation & scam evaluation…");
 
     const addLog = (msg: string) => {
@@ -318,7 +320,14 @@ export default function Home() {
             saveToLedger(errData.report);
           }
         } catch {
-          // Non-JSON response
+          try {
+            const rawText = await response.text();
+            if (rawText && rawText.length < 300) {
+              errorMsg = rawText;
+            }
+          } catch {
+            // Ignore secondary read failure
+          }
         }
         throw new Error(errorMsg);
       }
@@ -390,27 +399,57 @@ export default function Home() {
           }
         };
 
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
+        let streamReceivedData = false;
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
 
-          buffer += decoder.decode(value, { stream: true });
-          let splitIdx: number;
+            buffer += decoder.decode(value, { stream: true });
+            let splitIdx: number;
 
-          while ((splitIdx = buffer.search(/\r?\n\r?\n/)) >= 0) {
-            const chunk = buffer.slice(0, splitIdx);
-            const delimiter = buffer.slice(splitIdx).match(/^\r?\n\r?\n/)?.[0] ?? "\n\n";
-            buffer = buffer.slice(splitIdx + delimiter.length);
+            while ((splitIdx = buffer.search(/\r?\n\r?\n/)) >= 0) {
+              const chunk = buffer.slice(0, splitIdx);
+              const delimiter = buffer.slice(splitIdx).match(/^\r?\n\r?\n/)?.[0] ?? "\n\n";
+              buffer = buffer.slice(splitIdx + delimiter.length);
 
-            if (chunk.trim()) {
-              handlePacket(chunk);
+              if (chunk.trim()) {
+                handlePacket(chunk);
+                streamReceivedData = true;
+              }
             }
           }
-        }
 
-        if (buffer.trim()) {
-          handlePacket(buffer);
-          buffer = "";
+          if (buffer.trim()) {
+            handlePacket(buffer);
+            buffer = "";
+            streamReceivedData = true;
+          }
+        } catch (streamErr) {
+          // Fall back to standard JSON if stream dropped on mobile or Safari before completion
+          if (!streamReceivedData) {
+            addLog("[STREAM] Live stream interrupted; retrying via direct mobile JSON API…");
+            const fallbackRes = await fetch("/api/investigate", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+              },
+              body: JSON.stringify(payload),
+            });
+            if (fallbackRes.ok) {
+              const data = await fallbackRes.json();
+              if (data.report) {
+                setResult(data.report);
+                if (data.report.replayUrl) setStreamingUrl(data.report.replayUrl);
+                saveToLedger(data.report);
+                setStatus(`Investigation complete · ${data.report.riskOutcome}`);
+                setActiveTab(data.report.scamIntelligence ? "intel" : "evidence");
+                return;
+              }
+            }
+          }
+          throw streamErr;
         }
       } else {
         const data = await response.json();
@@ -1115,16 +1154,70 @@ export default function Home() {
             </div>
           )}
 
-          {/* Error Alert */}
+          {/* Error Alert with Safe Diagnostics & Retry */}
           {error && (
             <div className="alert-card-danger" role="alert">
               <div className="alert-head">
                 <Icon name="alert-triangle" />
                 <span>Investigation Alert</span>
               </div>
-              <p>{error}</p>
+
+              {/* Categorized diagnostic badge */}
+              <div className="alert-badge-row">
+                <span className="alert-category-pill">
+                  {error.includes("CORS") || error.includes("403")
+                    ? "Security & Origin Policy"
+                    : error.includes("Rate limit") || error.includes("429") || error.includes("Too many")
+                    ? "Rate Limiting"
+                    : error.includes("TinyFish") || error.includes("503")
+                    ? "Intelligence Engine Notice"
+                    : error.includes("timeout") || error.includes("timed out") || error.includes("504")
+                    ? "Timeout"
+                    : error.includes("Network") || error.includes("fetch")
+                    ? "Network Connectivity"
+                    : "Investigation Error"}
+                </span>
+              </div>
+
+              <p className="alert-main-text">{error}</p>
+
+              {/* Actionable guidance based on error type */}
+              <p className="alert-guidance">
+                {error.includes("CORS") || error.includes("403")
+                  ? "This domain or app origin is not in the approved AheadGuard allowlist. If you are accessing via an iOS WebView, custom domain, or preview build, please ensure ALLOWED_APP_ORIGINS is configured."
+                  : error.includes("Rate limit") || error.includes("429") || error.includes("Too many")
+                  ? "Too many investigations submitted from this device. Please wait 30–60 seconds before submitting another check."
+                  : error.includes("TinyFish") || error.includes("503")
+                  ? "The external crawler engine is temporarily unconfigured or unavailable. Text-only message and offer checks remain operational."
+                  : error.includes("timeout") || error.includes("timed out") || error.includes("504")
+                  ? "The target destination or service did not respond within the maximum safety window. No safe verdict could be determined."
+                  : "An unexpected error interrupted the investigation pipeline."}
+              </p>
+
               {error.includes("TINYFISH_API_KEY") && (
                 <code>Add TINYFISH_API_KEY=your_key to .env.local and restart your server.</code>
+              )}
+
+              {/* Core Safety Warning */}
+              <div className="alert-safety-warning">
+                <strong>Safety Notice:</strong> An investigation error or halt is <em>never</em> a clean bill of health. Do not assume an unverified message, link, or payment request is safe.
+              </div>
+
+              {/* Action Button */}
+              {lastPayload && (
+                <div className="alert-actions">
+                  <button
+                    type="button"
+                    className="retry-btn"
+                    onClick={() => {
+                      if (lastPayload) runInvestigation(lastPayload);
+                    }}
+                    disabled={loading}
+                  >
+                    <Icon name="refresh" />
+                    <span>Retry Investigation</span>
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -2339,6 +2432,12 @@ function Icon({ name }: { name: string }) {
       <>
         <rect x="3" y="11" width="18" height="10" rx="2" />
         <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      </>
+    ),
+    refresh: (
+      <>
+        <path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5" />
+        <path d="M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5" />
       </>
     ),
     check: <path d="m5 12 4 4L19 6" />,

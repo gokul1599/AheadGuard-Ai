@@ -17,30 +17,24 @@ import {
   checkRateLimit,
   getClientIp,
   verifyAdminAuth,
+  createCorsHeaders,
+  createCorsForbiddenResponse,
 } from "@/lib/api-security";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
 function getCorsHeaders(request: Request): Record<string, string> {
-  const origin = request.headers.get("origin");
-  if (origin && isAllowedOrigin(origin)) {
-    return {
-      "Access-Control-Allow-Origin": origin,
-      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Accept",
-      "Vary": "Origin",
-    };
-  }
-  return {
-    "Vary": "Origin",
-  };
+  return createCorsHeaders(request, "GET, POST, OPTIONS");
 }
 
 export async function OPTIONS(request: Request) {
   const origin = request.headers.get("origin");
-  if (!origin || !isAllowedOrigin(origin)) {
-    return new Response("CORS origin not allowed.", { status: 403 });
+  if (!origin) {
+    return createCorsForbiddenResponse(request, "OPTIONS preflight request missing Origin header.");
+  }
+  if (!isAllowedOrigin(origin, request)) {
+    return createCorsForbiddenResponse(request, `Origin '${origin}' is not authorized by AheadGuard security policy.`);
   }
   const headers = getCorsHeaders(request);
   return new Response(null, {
@@ -76,8 +70,8 @@ function sanitizeClientError(error: unknown): string {
 
 export async function GET(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && !isAllowedOrigin(origin)) {
-    return new Response("CORS origin not allowed.", { status: 403 });
+  if (origin && !isAllowedOrigin(origin, request)) {
+    return createCorsForbiddenResponse(request, `Origin '${origin}' is not authorized.`);
   }
 
   // Rate limiting & abuse protection
@@ -137,8 +131,8 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin && !isAllowedOrigin(origin)) {
-    return new Response("CORS origin not allowed.", { status: 403 });
+  if (origin && !isAllowedOrigin(origin, request)) {
+    return createCorsForbiddenResponse(request, `Origin '${origin}' is not authorized.`);
   }
 
   // Defensively reject oversized payloads (max 16KB for URL / message investigation request)

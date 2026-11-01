@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { isAllowedOrigin, checkRateLimit, getClientIp } from "@/lib/api-security";
+import { checkRateLimit, getClientIp, createCorsHeaders } from "@/lib/api-security";
 import { JobStore } from "@/lib/jobs/job-store";
 import { DurableWorker } from "@/lib/jobs/durable-worker";
 
@@ -18,15 +18,7 @@ const MobileShareSchema = z.object({
 });
 
 export async function POST(request: Request) {
-  const origin = request.headers.get("origin");
-  const headers: Record<string, string> = {
-    "Vary": "Origin",
-  };
-  if (origin && isAllowedOrigin(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
-    headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization";
-  }
+  const headers = createCorsHeaders(request, "POST, OPTIONS");
 
   const clientIp = getClientIp(request);
   const rateLimit = checkRateLimit(clientIp);
@@ -96,14 +88,6 @@ export async function POST(request: Request) {
 }
 
 export async function OPTIONS(request: Request) {
-  const origin = request.headers.get("origin");
-  const headers: Record<string, string> = {
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Vary": "Origin",
-  };
-  if (origin && isAllowedOrigin(origin)) {
-    headers["Access-Control-Allow-Origin"] = origin;
-  }
+  const headers = createCorsHeaders(request, "POST, OPTIONS");
   return new Response(null, { status: 204, headers });
 }
