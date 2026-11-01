@@ -29,7 +29,11 @@ const OfferInputSchema = z.object({
   applicationUrl: z.string().trim().max(2048).optional(),
   paymentAmount: z.string().trim().max(50).optional(),
   paymentReason: z.string().trim().max(500).optional(),
+  allowLiveCrawl: z.boolean().optional(),
   simulateCheckFailure: z.boolean().optional(),
+  simulatePolicyFailure: z.boolean().optional(),
+  simulateTinyFishFailure: z.boolean().optional(),
+  tinyFishApiKey: z.string().trim().max(500).optional(),
 });
 
 function getCorsHeaders(request: Request): Record<string, string> {

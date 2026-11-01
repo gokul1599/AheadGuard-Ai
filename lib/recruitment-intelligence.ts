@@ -442,8 +442,15 @@ function extractRecruitmentFee(
 
   // General recruitment fee phrasing match if no numeric amount was given but payment is demanded
   const genericFeePhrase =
-    /(?:pay|deposit|send|transfer)\s+(?:a\s+)?(?:mandatory\s+)?(?:registration|onboarding|interview|training|equipment|offer\s+letter)\s+(?:fee|deposit|charge)/i;
-  const genericMatch = text.match(genericFeePhrase);
+    /(?:pay|deposit|send|transfer|remit|complete)\s+(?:a|an|the|our|your|any)?\s*(?:mandatory|refundable|nominal|required|advance|initial)?\s*(?:registration|onboarding|interview|training|equipment|offer\s+letter|verification)?\s*(?:fee|fees|deposit|deposits|charge|charges|payment|payments)\b/i;
+
+  const mandatoryFeePhrase =
+    /(?:mandatory|required)\s+(?:registration|onboarding|interview|training|equipment|hiring)?\s*(?:fee|fees|deposit|deposits|charge|charges|payment)/i;
+
+  const paymentForDocPhrase =
+    /(?:payment|fee|deposit)\s+(?:is\s+)?(?:mandatory|required|needed)?\s*(?:before|to)\s+(?:receiving|getting|generating|issuing|issue|receive)?\s*(?:your\s+)?(?:offer\s+letter|onboarding|joining|internship)/i;
+
+  const genericMatch = text.match(genericFeePhrase) || text.match(mandatoryFeePhrase) || text.match(paymentForDocPhrase);
 
   const detected = Boolean(amountStr || genericMatch);
   if (!quotedText && genericMatch) {

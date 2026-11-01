@@ -5,6 +5,7 @@ export interface TinyFishRunOptions {
   apiKey: string;
   signal?: AbortSignal;
   onProgress?: (event: ProgressEvent) => void;
+  goal?: string;
 }
 
 export interface TinyFishStructuredResult {
@@ -329,7 +330,7 @@ export async function executeTinyFishInvestigation(
       },
       body: JSON.stringify({
         url,
-        goal: READ_ONLY_INVESTIGATION_GOAL,
+        goal: options.goal || READ_ONLY_INVESTIGATION_GOAL,
       }),
       signal: combinedSignal,
     });

@@ -272,18 +272,22 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
   }
 
   // Claim 3: Payment Request / Interview Fee (Directly OBSERVED in user's message)
-  if (paymentAmount) {
-    const formattedFee = `${paymentCurrency} ${paymentAmount}`;
+  if (paymentAmount || recruitmentAnalysis.fee.detected) {
+    const formattedFee = paymentAmount
+      ? `${paymentCurrency} ${paymentAmount}`
+      : "Mandatory fee demanded (amount not disclosed in communication)";
     claims.push({
       id: "claim-offer-payment",
       category: "payment_requirement",
-      claimTitle: "Mandatory Interview / Registration Fee",
+      claimTitle: "Mandatory Recruitment / Registration Fee",
       extractedValue: `${formattedFee}${paymentReason ? ` (${paymentReason})` : ""}`,
       status: "OBSERVED",
       observationTime: now,
-      explanation: `The offer demands payment of ${formattedFee} prior to interview slot reservation or candidacy onboarding.`,
+      explanation: paymentAmount
+        ? `The offer demands payment of ${formattedFee} prior to interview slot reservation or candidacy onboarding.`
+        : `The offer explicitly conditions progression or offer letter issuance on payment of a mandatory recruitment fee, without disclosing the exact numerical amount.`,
       unresolvedQuestions: ["Does the employer's published hiring policy allow applicant fees or slot reservation payments?"],
-      suggestedAction: "Check the employer's published candidate guidance and anti-fraud hiring policy.",
+      suggestedAction: "Check the employer's published candidate guidance and anti-fraud hiring policy. DO NOT PAY.",
     });
   }
 
@@ -461,16 +465,16 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
       affiliationStatus: "UNVERIFIED",
     },
     payment: {
-      requested: recruitmentAnalysis.fee.detected,
+      requested: Boolean(recruitmentAnalysis.fee.detected || paymentAmount),
       amount: recruitmentAnalysis.fee.numericAmount,
-      amountString: paymentAmount,
+      amountString: paymentAmount || (recruitmentAnalysis.fee.detected ? "Undisclosed" : undefined),
       currency: paymentCurrency,
-      method: paymentChannel,
+      method: paymentChannel || recruitmentAnalysis.fee.paymentMethod,
       upiId: recruitmentAnalysis.fee.upiId,
       mandatory: recruitmentAnalysis.fee.mandatory,
       refundableClaimed: recruitmentAnalysis.fee.refundabilityClaimed,
       deadline: urgencyText,
-      statedReason: paymentReason,
+      statedReason: paymentReason || recruitmentAnalysis.fee.reason,
     },
     selection: {
       interviewRequired: !noInterviewClaim,

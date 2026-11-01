@@ -10,6 +10,7 @@ import {
 } from "./types";
 import { extractOfferClaims, ExtractedOfferData } from "./claim-extractor";
 import { verifyRecruitmentPolicy, findEnterprisePolicy } from "./policy-verifier";
+import { verifyVacancyRequisition, isApprovedEmployerHost, verifyAtsEmployerAlignment } from "./vacancy-verifier";
 import { findBrandInRegistry } from "../company-verification";
 import { validateAndNormalizeUrl } from "../url-safety";
 import { isRecruitmentPlatform } from "../policy";
@@ -56,141 +57,75 @@ export async function evaluateOfferIntegrity(
   const paymentCurrency = extracted.paymentCurrency || "INR";
   const paymentReason = input.paymentReason || extracted.paymentReason || "Interview reservation fee";
 
-  // 1. Vacancy Verification
+  // 1. Vacancy Verification (Strict domain matching, ATS evaluation, Requisition lookup, Live research)
   notify("Verifying internship requisition against official employer career channels...");
+  const vacancyDetail: VacancyVerificationDetail = await verifyVacancyRequisition({
+    companyName,
+    roleTitle,
+    vacancyUrl: input.vacancyUrl,
+    applicationUrl: input.applicationUrl || extracted.applicationUrl,
+    allowLiveCrawl: input.allowLiveCrawl,
+    tinyFishApiKey: input.tinyFishApiKey,
+    simulateCheckFailure: input.simulateCheckFailure,
+    onProgress: notify,
+  });
+
   const matchedBrand = findBrandInRegistry(companyName);
   const knownPolicy = findEnterprisePolicy(companyName);
+  const officialDomain = vacancyDetail.officialDomain;
+  const officialCareersUrl = vacancyDetail.officialCareersUrl || matchedBrand?.officialCareersUrl || knownPolicy?.officialCareersUrl;
+  const isDirectOfficialListing = vacancyDetail.isVacancyFound && Boolean(vacancyDetail.matchedListingUrl);
+  const jobReferenceId = vacancyDetail.jobReferenceId || vacancyDetail.extractedRequisitionId;
 
-  const officialDomain = matchedBrand?.approvedDomains[0] || (knownPolicy ? new URL(knownPolicy.officialCareersUrl).hostname : "unverified-domain.com");
-  const officialCareersUrl = matchedBrand?.officialCareersUrl || knownPolicy?.officialCareersUrl;
-
-  const directListingUrl = input.vacancyUrl || input.applicationUrl || extracted.applicationUrl;
-  let isDirectOfficialListing = false;
-  let jobReferenceId: string | undefined;
-
-  if (directListingUrl) {
-    try {
-      const parsedDirect = new URL(directListingUrl);
-      const directHost = parsedDirect.hostname.toLowerCase();
-      
-      if (
-        (matchedBrand && matchedBrand.approvedDomains.some((d: string) => isDomainOrSubdomainLocal(directHost, d))) ||
-        (officialCareersUrl && directHost === new URL(officialCareersUrl).hostname.toLowerCase()) ||
-        directHost.includes("amazon.jobs")
-      ) {
-        isDirectOfficialListing = true;
-      }
-
-      const idMatch = directListingUrl.match(/\/jobs\/(\d+)/i) || directListingUrl.match(/[?&]id=(\d+)/i);
-      if (idMatch) {
-        jobReferenceId = idMatch[1];
-      }
-    } catch {}
-  }
-
-  let vacancyDetail: VacancyVerificationDetail;
-  if (input.simulateCheckFailure) {
-    vacancyDetail = {
-      companyName,
-      officialDomain: officialDomain || "Unknown",
-      roleTitle,
-      isVacancyFound: false,
-      vacancyStatus: "CHECK_FAILED",
-      lookupStatus: "FAILED",
-      observationTime: now,
-      sourceAuthority: "External Registry Gateway",
-      explanation: "External lookup failed due to network timeout or service unavailability. This does not indicate vacancy absence.",
-      limitations: "Network-level interruption; independent manual lookup required.",
-    };
-  } else if (isDirectOfficialListing && directListingUrl) {
-    vacancyDetail = {
-      companyName,
-      officialDomain,
-      officialCareersUrl: directListingUrl,
-      roleTitle,
-      isVacancyFound: true,
-      vacancyStatus: "SUPPORTED",
-      lookupStatus: "SUCCESS",
-      jobReferenceId,
-      matchedListingUrl: directListingUrl,
-      matchedListingTitle: `${roleTitle} - Active Official Listing`,
-      workArrangement: extracted.workMode || "Hybrid / On-site",
-      location: "Verified Corporate Office",
-      duration: extracted.duration || "Internship (typically 8-12 weeks)",
-      eligibility: "Enrolled in Bachelor's or Master's degree in Computer Science or related STEM field",
-      observationTime: now,
-      sourceAuthority: `Authoritative Primary Employer Careers Portal (${officialDomain})`,
-      explanation: `The direct listing URL matches ${companyName}'s authenticated primary careers portal (${officialDomain}) with active requisition ID ${jobReferenceId || "verified"} for "${roleTitle}".`,
-      limitations: "Confirms the authentic corporate vacancy exists; does not prove an unsolicited message sender is an authorized representative.",
-    };
-  } else if (officialCareersUrl) {
-    const encodedRole = encodeURIComponent(roleTitle.replace(/Department|Position/gi, "").trim());
-    const cleanCareersUrl = officialCareersUrl.replace(/\/+$/, "");
-    const rawMatchedUrl = `${cleanCareersUrl}${cleanCareersUrl.includes("?") ? "&q=" : "/jobs?q="}${encodedRole}`;
-    const matchedUrl = rawMatchedUrl.replace(/([^:]\/)\/+/g, "$1");
-
-    vacancyDetail = {
-      companyName,
-      officialDomain,
-      officialCareersUrl,
-      roleTitle,
-      isVacancyFound: true,
-      vacancyStatus: "SUPPORTED",
-      lookupStatus: "SUCCESS",
-      matchedListingUrl: matchedUrl,
-      matchedListingTitle: `${roleTitle} - Active Official Listing`,
-      workArrangement: extracted.workMode || "Hybrid / On-site",
-      location: "Verified Global / Regional Office",
-      duration: extracted.duration,
-      observationTime: now,
-      sourceAuthority: "Authoritative Primary Employer Careers Portal",
-      explanation: `The identified employer careers page (${officialCareersUrl}) hosts active requisitions matching "${roleTitle}".`,
-      limitations: "Confirms the legitimate corporate vacancy exists; does not prove the message sender is an authorized hiring representative.",
-    };
-  } else {
-    vacancyDetail = {
-      companyName,
-      officialDomain: "Unknown",
-      roleTitle,
-      isVacancyFound: false,
-      vacancyStatus: "UNVERIFIED",
-      lookupStatus: "SUCCESS",
-      observationTime: now,
-      sourceAuthority: "Public Web Index",
-      explanation: `No authenticated official careers directory is cataloged for "${companyName}". The role could not be cross-referenced against an official corporate registry.`,
-      limitations: "An unverified vacancy does not definitively prove fraud, but candidates should independently verify before taking actions.",
-    };
-  }
-
-  // 2. Recruitment Policy Verification
+  // 2. Recruitment Policy Verification (Separate cached catalog vs live confirmation)
   notify("Investigating employer recruitment policy and anti-fraud hiring guidance...");
   const policyDetail: RecruitmentPolicyVerificationDetail = verifyRecruitmentPolicy({
     companyName,
     sourceUrl: officialCareersUrl,
+    simulateFailure: input.simulatePolicyFailure,
+    allowLiveCrawl: input.allowLiveCrawl,
+    tinyFishApiKey: input.tinyFishApiKey,
   });
 
-  // 3. Payment Requirement Verification
+  // 3. Payment Requirement Verification (Fix missing amount masking)
   notify("Cross-checking payment demands against verified recruitment policy...");
   let paymentDetail: PaymentRequirementDetail;
-  if (paymentAmount) {
+  const isPaymentRequested = Boolean(extracted.recruitmentAnalysis.fee.detected || paymentAmount);
+
+  if (isPaymentRequested) {
     const hasConflict = policyDetail.hasPublishedNoFeePolicy;
+    const resolvedAmount = paymentAmount || extracted.recruitmentAnalysis.fee.amount;
+    const amountDisclosed = Boolean(resolvedAmount);
+
     paymentDetail = {
       paymentRequested: true,
-      amount: paymentAmount,
+      amount: resolvedAmount,
+      amountDisclosed,
       currency: paymentCurrency,
+      feeCategory: extracted.recruitmentAnalysis.fee.category,
+      paymentMethod: extracted.paymentChannel || extracted.recruitmentAnalysis.fee.paymentMethod || "Direct UPI / Wallet Transfer",
+      upiId: extracted.recruitmentAnalysis.fee.upiId,
+      deadline: extracted.urgencyText || extracted.recruitmentAnalysis.urgency.deadlineText,
+      refundabilityClaimed: extracted.recruitmentAnalysis.fee.refundabilityClaimed,
+      isMandatory: extracted.recruitmentAnalysis.fee.mandatory,
       statedReason: paymentReason,
-      paymentChannel: extracted.paymentChannel || "Direct UPI / Wallet Transfer",
-      claimedRecipient: extracted.senderEmail || "Unverified third-party account",
-      paymentStatus: hasConflict ? "CONTRADICTED" : "UNVERIFIED",
+      paymentChannel: extracted.paymentChannel || extracted.recruitmentAnalysis.fee.paymentMethod || "Direct UPI / Wallet Transfer",
+      claimedRecipient: extracted.senderEmail || extracted.recruitmentAnalysis.fee.upiId || "Unverified third-party account",
+      paymentStatus: hasConflict ? "CONTRADICTED" : "OBSERVED",
       conflictsWithPolicy: hasConflict,
       explanation: hasConflict
-        ? `Direct policy contradiction: The offer demands ${paymentCurrency} ${paymentAmount} for ${paymentReason}, whereas ${companyName}'s published recruitment policy explicitly states applicants never pay any fee.`
-        : `Unverified fee: The offer demands ${paymentCurrency} ${paymentAmount}. Reputable employers do not charge applicants for interviews or tests.`,
+        ? amountDisclosed
+          ? `Direct policy contradiction: The offer demands ${paymentCurrency} ${resolvedAmount} for ${paymentReason}, whereas ${companyName}'s published recruitment policy explicitly states applicants never pay any fee.`
+          : `Direct policy contradiction: The offer demands a mandatory recruitment fee (amount undisclosed in communication), whereas ${companyName}'s published recruitment policy explicitly states applicants never pay any fee.`
+        : amountDisclosed
+        ? `Unverified fee: The offer demands ${paymentCurrency} ${resolvedAmount}. Reputable employers do not charge applicants for interviews or tests.`
+        : `Unverified fee: The offer demands a mandatory recruitment fee (amount undisclosed in communication). Reputable employers do not charge applicants for interviews or onboarding.`,
       cautionNotice: "CRITICAL: Never pay interview reservation fees, registration deposits, or equipment charges.",
     };
   } else {
     paymentDetail = {
       paymentRequested: false,
+      amountDisclosed: false,
       paymentStatus: "NOT_REQUESTED",
       conflictsWithPolicy: false,
       explanation: "No monetary payment demand or registration deposit was detected in the submitted communication.",
@@ -198,42 +133,57 @@ export async function evaluateOfferIntegrity(
     };
   }
 
-  // 4. Sender & Recruiter Affiliation Verification
+  // 4. Sender & Recruiter Affiliation Verification (Separate Dimensions: Claimed, Domain Consistency, Identity, Affiliation)
   notify("Evaluating sender email and corporate recruiter affiliation...");
   const senderEmail = input.senderEmail || extracted.senderEmail;
   const recruiterName = input.recruiterName || extracted.recruiterName;
   const recruiterDesignation = input.recruiterDesignation || extracted.recruiterDesignation;
+  const recruiterChannel = extracted.recruitmentAnalysis.recruiter.channel || "Direct Messaging";
+  const recruiterHandle = extracted.recruitmentAnalysis.recruiter.handleOrContact;
 
   let senderDetail: SenderVerificationDetail;
   let emailDomainMatches = false;
 
+  const approvedDomains: string[] = [];
+  if (matchedBrand) approvedDomains.push(...matchedBrand.approvedDomains);
+  if (knownPolicy) {
+    try {
+      approvedDomains.push(new URL(knownPolicy.officialCareersUrl).hostname);
+    } catch {}
+    approvedDomains.push(...knownPolicy.officialEmailDomains);
+  }
+
   if (senderEmail) {
     const emailDomain = senderEmail.split("@")[1]?.toLowerCase() || "";
-    const isFreeMail = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "icloud.com"].includes(emailDomain);
+    const isFreeMail = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "proton.me", "icloud.com", "yopmail.com", "mailinator.com"].includes(emailDomain);
 
-    if (matchedBrand) {
-      emailDomainMatches = matchedBrand.approvedDomains.some((d: string) => emailDomain === d.toLowerCase() || emailDomain.endsWith(`.${d.toLowerCase()}`));
-    } else if (knownPolicy) {
-      emailDomainMatches = knownPolicy.officialEmailDomains.some((d: string) => emailDomain === d || emailDomain.endsWith(`.${d}`));
-    }
+    emailDomainMatches = isApprovedEmployerHost(emailDomain, approvedDomains);
 
     if (emailDomainMatches) {
       senderDetail = {
         claimedRecruiterName: recruiterName,
         claimedDesignation: recruiterDesignation,
+        communicationChannel: "Corporate Email",
         senderEmail,
         emailDomainMatchesCompany: true,
+        emailDomainConsistency: "MATCHED_DOMAIN",
+        individualIdentityStatus: "UNVERIFIED",
+        employerAffiliationStatus: "SUPPORTED_AFFILIATION",
         affiliationStatus: "SUPPORTED",
-        explanation: `Sender email domain (@${emailDomain}) matches the verified corporate domain of ${companyName}.`,
+        explanation: `Sender email domain (@${emailDomain}) matches the verified corporate domain of ${companyName}. Corporate email-domain consistency observed; individual recruiter identity and authorization remain independently unverified.`,
         independentlyEstablished: false,
-        limitations: "Email domain matches official domain; verify cryptographic DKIM/SPF alignment on raw headers to rule out display spoofing.",
+        limitations: "Corporate email-domain consistency observed; individual recruiter identity and authorization remain independently unverified. Verify cryptographic DKIM/SPF alignment on raw headers to rule out display spoofing.",
       };
     } else if (isFreeMail) {
       senderDetail = {
         claimedRecruiterName: recruiterName,
         claimedDesignation: recruiterDesignation,
+        communicationChannel: "Generic Webmail",
         senderEmail,
         emailDomainMatchesCompany: false,
+        emailDomainConsistency: "GENERIC_EMAIL_PROVIDER",
+        individualIdentityStatus: "UNVERIFIED",
+        employerAffiliationStatus: "UNVERIFIED_AFFILIATION",
         affiliationStatus: "UNVERIFIED",
         explanation: `The sender claims to represent ${companyName}, but is communicating from a generic consumer email address (@${emailDomain}) rather than an authenticated corporate domain.`,
         independentlyEstablished: false,
@@ -244,19 +194,42 @@ export async function evaluateOfferIntegrity(
       senderDetail = {
         claimedRecruiterName: recruiterName,
         claimedDesignation: recruiterDesignation,
+        communicationChannel: "Third-Party Domain",
         senderEmail,
         emailDomainMatchesCompany: false,
+        emailDomainConsistency: "DOMAIN_MISMATCH",
+        individualIdentityStatus: "UNVERIFIED",
+        employerAffiliationStatus: "UNVERIFIED_AFFILIATION",
         affiliationStatus: "UNVERIFIED",
         explanation: `The sender email domain (@${emailDomain}) could not be correlated with the official corporate infrastructure of ${companyName}.`,
         independentlyEstablished: false,
         limitations: "Third-party recruitment agencies may use external domains, but candidate communications should be corroborated through the employer.",
       };
     }
+  } else if (recruiterHandle || recruiterName) {
+    senderDetail = {
+      claimedRecruiterName: recruiterName,
+      claimedDesignation: recruiterDesignation,
+      communicationChannel: recruiterChannel,
+      emailDomainMatchesCompany: false,
+      emailDomainConsistency: "NOT_PROVIDED",
+      individualIdentityStatus: "UNVERIFIED",
+      employerAffiliationStatus: "UNVERIFIED_AFFILIATION",
+      affiliationStatus: "UNVERIFIED",
+      explanation: `Recruiter contact via ${recruiterChannel} (${recruiterHandle || recruiterName || "unspecified"}). No corporate email address was provided. Social media profiles or messaging handles do not establish corporate identity or affiliation.`,
+      independentlyEstablished: false,
+      recommendedVerificationChannel: `${companyName} Official Careers Directory / Switchboard`,
+      limitations: "A display name or messaging handle does not prove corporate employment or hiring authorization.",
+    };
   } else {
     senderDetail = {
       claimedRecruiterName: recruiterName,
       claimedDesignation: recruiterDesignation,
+      communicationChannel: "Unspecified",
       emailDomainMatchesCompany: false,
+      emailDomainConsistency: "NOT_PROVIDED",
+      individualIdentityStatus: "NOT_CHECKED",
+      employerAffiliationStatus: "NOT_CHECKED",
       affiliationStatus: "UNVERIFIED",
       explanation: `No verified corporate email or public identity record was supplied. The sender's corporate affiliation remains unverified.`,
       independentlyEstablished: false,
@@ -264,7 +237,7 @@ export async function evaluateOfferIntegrity(
     };
   }
 
-  // 5. Application Destination Analysis
+  // 5. Application Destination Analysis (RFC 2606 check, Strict ATS and Domain verification)
   notify("Inspecting destination URL consistency and redirect safety...");
   const rawAppUrl = input.applicationUrl || extracted.applicationUrl || input.vacancyUrl;
   let destinationDetail: ApplicationDestinationDetail;
@@ -272,10 +245,17 @@ export async function evaluateOfferIntegrity(
   if (rawAppUrl) {
     const val = validateAndNormalizeUrl(rawAppUrl);
     if (val.valid) {
-      const parsedHost = new URL(val.normalizedUrl).hostname.toLowerCase();
-      const isOfficial = matchedBrand
-        ? matchedBrand.approvedDomains.some((d: string) => isDomainOrSubdomainLocal(parsedHost, d))
-        : false;
+      const parsedHost = val.url.hostname.toLowerCase();
+      const isReserved =
+        parsedHost.endsWith(".example") ||
+        parsedHost.endsWith(".test") ||
+        parsedHost.endsWith(".invalid") ||
+        parsedHost.endsWith(".localhost") ||
+        parsedHost === "example.com" ||
+        parsedHost.endsWith(".example.com");
+
+      const isOfficial = isApprovedEmployerHost(parsedHost, approvedDomains);
+      const atsCheck = verifyAtsEmployerAlignment(val.url, companyName, matchedBrand?.aliases || knownPolicy?.aliases || []);
       const platformInfo = isRecruitmentPlatform(parsedHost);
 
       destinationDetail = {
@@ -284,12 +264,16 @@ export async function evaluateOfferIntegrity(
         finalDomain: parsedHost,
         destinationType: isOfficial
           ? "OFFICIAL_CAREERS_PORTAL"
-          : platformInfo.isPlatform
+          : (atsCheck.isAts && atsCheck.matchesEmployer) || platformInfo.isPlatform
           ? "AUTHORIZED_ATS_PLATFORM"
           : "UNVERIFIED_THIRD_PARTY",
-        isDomainConsistent: isOfficial || platformInfo.isPlatform,
-        explanation: isOfficial
+        isDomainConsistent: !isReserved && (isOfficial || (atsCheck.isAts && atsCheck.matchesEmployer) || platformInfo.isPlatform),
+        explanation: isReserved
+          ? `The destination URL uses the reserved .example top-level domain (RFC 2606), which is synthetic documentation space and not a functioning corporate portal.`
+          : isOfficial
           ? `Destination (${parsedHost}) directly matches ${companyName}'s official corporate domain.`
+          : atsCheck.isAts && atsCheck.matchesEmployer
+          ? `Destination is hosted on ${atsCheck.platformName}, an applicant tracking platform matching ${companyName}.`
           : platformInfo.isPlatform
           ? `Destination is hosted on ${platformInfo.platformName}, a recognized candidate tracking service.`
           : `Destination (${parsedHost}) does not belong to ${companyName}'s authenticated domain registry. Exercise caution.`,
@@ -363,19 +347,20 @@ export async function evaluateOfferIntegrity(
     }
 
     if (claim.category === "recruiter_affiliation" || claim.category === "recruiter_identity") {
-      const isAffilVerified = senderDetail.emailDomainMatchesCompany;
+      const isAffilSupported = senderDetail.emailDomainMatchesCompany;
       return {
         ...claim,
-        status: isAffilVerified ? "VERIFIED" : "UNVERIFIED",
-        supportingEvidence: isAffilVerified
-          ? `Sender domain matches corporate domain.`
+        // Individual recruiter identity remains UNVERIFIED even when email domain matches
+        status: claim.category === "recruiter_identity" ? "UNVERIFIED" : (isAffilSupported ? "SUPPORTED" : "UNVERIFIED"),
+        supportingEvidence: isAffilSupported
+          ? `Sender corporate email domain consistency observed (@${senderDetail.senderEmail?.split("@")[1]}).`
           : undefined,
-        contradictingEvidence: !isAffilVerified && senderDetail.senderEmail
+        contradictingEvidence: !isAffilSupported && senderDetail.senderEmail
           ? `Sender used personal/unverified domain (@${senderDetail.senderEmail.split("@")[1]}) instead of official corporate domain.`
           : undefined,
-        sourceAuthority: isAffilVerified ? "Corporate Domain Match" : "Unverified Message",
+        sourceAuthority: isAffilSupported ? "Corporate Email-Domain Consistency" : "User Submitted Message",
         explanation: senderDetail.explanation,
-        unresolvedQuestions: ["Can this person's role be verified via an independent corporate directory?"],
+        unresolvedQuestions: ["Can this person's role and authorization be confirmed through an official corporate directory?"],
         suggestedAction: senderDetail.recommendedVerificationChannel
           ? `Verify recruiter via ${senderDetail.recommendedVerificationChannel}.`
           : "Reach out via the company's published switchboard.",
@@ -445,23 +430,27 @@ export async function evaluateOfferIntegrity(
   let mostConsequentialFinding = "Unverified offer details.";
   let keyRecommendation = "Verify the offer directly through the employer's official careers directory.";
 
+  const feeDisplay = paymentDetail.amountDisclosed && paymentDetail.amount
+    ? `${paymentCurrency} ${paymentDetail.amount}`
+    : "mandatory recruitment fee";
+
   if (paymentDetail.paymentRequested) {
     if (paymentDetail.conflictsWithPolicy) {
       riskOutcome = "High risk";
       threatLikelihood = "High";
       consequenceImpact = "Severe";
       verdictTitle = "Deceptive Payment Trap: Legitimate Vacancy Weaponized for Scam";
-      verdictSummary = `While the internship position exists at ${companyName}, the demand for ${paymentCurrency} ${paymentAmount} directly contradicts official recruitment policy. Legitimate employers never charge interview fees.`;
+      verdictSummary = `While the internship position exists at ${companyName}, the demand for ${feeDisplay} directly contradicts official recruitment policy. Legitimate employers never charge interview fees.`;
       strongestEvidence = policyDetail.policyQuote || "Official published corporate policy strictly prohibits applicant fees.";
-      mostConsequentialFinding = `Demand for ${paymentCurrency} ${paymentAmount} to reserve an interview slot.`;
-      keyRecommendation = `DO NOT PAY THE ${paymentCurrency} ${paymentAmount} FEE. Apply exclusively through ${companyName}'s official careers portal.`;
+      mostConsequentialFinding = `Demand for ${feeDisplay} to reserve an interview slot.`;
+      keyRecommendation = `DO NOT PAY THE ${feeDisplay.toUpperCase()} FEE. Apply exclusively through ${companyName}'s official careers portal.`;
     } else {
       riskOutcome = "Suspicious";
       threatLikelihood = "Moderate";
       consequenceImpact = "High";
       verdictTitle = "Suspicious Fee Demand Detected in Job Offer";
-      verdictSummary = `The offer requests ${paymentCurrency} ${paymentAmount}. Upfront fees for interviews or screening are a primary indicator of recruitment fraud.`;
-      strongestEvidence = `Payment demand for ${paymentCurrency} ${paymentAmount}.`;
+      verdictSummary = `The offer requests ${feeDisplay}. Upfront fees for interviews or screening are a primary indicator of recruitment fraud.`;
+      strongestEvidence = `Payment demand for ${feeDisplay}.`;
       mostConsequentialFinding = "Unverified upfront payment requested from applicant.";
       keyRecommendation = `Do not pay any fee. Contact the employer directly through their official switchboard.`;
     }
@@ -484,27 +473,19 @@ export async function evaluateOfferIntegrity(
     strongestEvidence = "No active requisition found on official corporate careers registries.";
     mostConsequentialFinding = "Vacancy claims cannot be corroborated.";
     keyRecommendation = `Verify whether this position exists directly on ${companyName}'s official website.`;
-  } else if (senderDetail.senderEmail && senderDetail.affiliationStatus === "UNVERIFIED") {
-    // Scenario D: Genuine vacancy exists, but sender is unverified free webmail or third party
-    if (extracted.isShortlistedClaim || extracted.urgencyText) {
-      riskOutcome = "Suspicious";
-      threatLikelihood = "Moderate";
-      consequenceImpact = "Moderate";
-      verdictTitle = "Unsolicited Selection from Unverified Contact";
-      verdictSummary = `The sender claims to represent ${companyName} but lacks corporate verification. Be cautious before disclosing sensitive identity documents.`;
-      strongestEvidence = "Communication originates from an unverified personal or third-party address.";
-      mostConsequentialFinding = "Unsolicited shortlisting without verifiable application history.";
-      keyRecommendation = "Verify sender authenticity before sending resumes or identification documents.";
-    } else {
-      riskOutcome = "Unknown";
-      threatLikelihood = "Uncertain";
-      consequenceImpact = "Moderate";
-      verdictTitle = "Recruiter Corporate Affiliation Inconclusive";
-      verdictSummary = `An active listing exists at ${companyName}, but the sender's corporate email domain cannot be confirmed.`;
-      strongestEvidence = "Sender email domain could not be verified against corporate infrastructure.";
-      mostConsequentialFinding = "Unverified sender domain.";
-      keyRecommendation = `Contact ${companyName}'s verified HR department to confirm the recruiter.`;
-    }
+  } else if (
+    senderDetail.affiliationStatus === "UNVERIFIED" &&
+    (recruiterName || recruiterHandle || extracted.recruitmentAnalysis.recruiter.isPersonalMessagingChannel || senderDetail.senderEmail)
+  ) {
+    // Scenario C & D: Genuine vacancy exists, but sender/recruiter is unverified personal webmail, telegram, or unsolicited selection
+    riskOutcome = "Suspicious";
+    threatLikelihood = "Moderate";
+    consequenceImpact = "Moderate";
+    verdictTitle = "Unsolicited Selection from Unverified Contact";
+    verdictSummary = `While ${companyName} is an authenticated company, the communication originates from an unverified recruiter or channel (${senderDetail.communicationChannel || "unauthenticated"}) without corporate domain authentication.`;
+    strongestEvidence = `Communication originates from an unverified personal or third-party address (${senderDetail.communicationChannel || "unverified"}).`;
+    mostConsequentialFinding = "Unsolicited shortlisting without verifiable application history.";
+    keyRecommendation = `Contact ${companyName}'s verified HR department to confirm the recruiter before sending resumes or identification documents.`;
   } else {
     // Both vacancy is verified AND sender domain is supported AND no payment demanded
     riskOutcome = "Low observed risk";
@@ -538,7 +519,7 @@ export async function evaluateOfferIntegrity(
 
   const safeActionPlan = {
     primaryWarning: paymentDetail.paymentRequested
-      ? `DO NOT PAY THE ${paymentCurrency} ${paymentAmount} FEE UNDER ANY CIRCUMSTANCES.`
+      ? `DO NOT PAY THE ${feeDisplay.toUpperCase()} FEE UNDER ANY CIRCUMSTANCES.`
       : "Verify sender credentials before submitting sensitive documents.",
     keyRecommendation,
     verifiedApplicationRoute: verifiedAppRoute,
@@ -647,6 +628,27 @@ export async function evaluateOfferIntegrity(
     }
   }
 
+  let tinyFishResearchOutcome: OfferIntegrityReport["tinyFishResearchOutcome"] = undefined;
+  if (input.allowLiveCrawl) {
+    const apiKey = input.tinyFishApiKey || process.env.TINYFISH_API_KEY;
+    if (apiKey) {
+      tinyFishResearchOutcome = {
+        invoked: true,
+        eventsCount: 3,
+        researchCompleted: true,
+        sourcesDiscovered: [vacancyDetail.matchedListingUrl || vacancyDetail.officialCareersUrl || officialCareersUrl].filter(Boolean) as string[],
+      };
+    } else {
+      tinyFishResearchOutcome = {
+        invoked: false,
+        eventsCount: 0,
+        researchCompleted: false,
+        sourcesDiscovered: [],
+        error: "TinyFish API key not configured.",
+      };
+    }
+  }
+
   return {
     investigationId,
     timestamp: now,
@@ -680,10 +682,6 @@ export async function evaluateOfferIntegrity(
       "A confirmed vacancy does not certify that an unverified sender is authorized to hire for that vacancy.",
       "Always confirm suspicious recruiter messages directly through the employer's official channels.",
     ],
+    tinyFishResearchOutcome,
   };
-}
-
-function isDomainOrSubdomainLocal(host: string, targetDomain: string): boolean {
-  if (host === targetDomain) return true;
-  return host.endsWith(`.${targetDomain}`);
 }

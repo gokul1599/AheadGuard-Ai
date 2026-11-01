@@ -85,7 +85,19 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
         return <span className="status-badge badge-observed" style={{ background: "rgba(59, 130, 246, 0.15)", color: "#60a5fa", border: "1px solid #3b82f6" }}>OBSERVED</span>;
       case "SUPPORTED":
       case "VERIFIED":
+      case "VERIFIED_ACTIVE":
+      case "LIVE_POLICY_CONFIRMED_NO_FEE":
+      case "POLICY_CONFIRMED_NO_FEE":
         return <span className="status-badge badge-match" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981", border: "1px solid #10b981" }}>VERIFIED</span>;
+      case "VERIFIED_CLOSED":
+      case "VERIFIED_EXPIRED":
+        return <span className="status-badge badge-closed" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", border: "1px solid #f59e0b" }}>{status.replace("_", " ")}</span>;
+      case "PARTIAL_MATCH":
+        return <span className="status-badge badge-partial" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#f59e0b", border: "1px solid #f59e0b" }}>PARTIAL MATCH</span>;
+      case "CHECK_FAILED":
+        return <span className="status-badge badge-failed" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid #ef4444" }}>CHECK FAILED</span>;
+      case "CACHED_POLICY_REFERENCE":
+        return <span className="status-badge badge-cached" style={{ background: "rgba(148, 163, 184, 0.15)", color: "#94a3b8", border: "1px solid #94a3b8" }}>CACHED REF</span>;
       case "CONTRADICTED":
         return <span className="status-badge badge-mismatch" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid #ef4444" }}>CONTRADICTED</span>;
       case "UNVERIFIED":
@@ -340,6 +352,34 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
               {getRiskOutcomePill(report.riskOutcome)}
             </div>
 
+            {/* TinyFish Live Research Indicator */}
+            {report.tinyFishResearchOutcome?.invoked && (
+              <div
+                style={{
+                  padding: "10px 14px",
+                  borderRadius: "6px",
+                  background: "rgba(6, 182, 212, 0.1)",
+                  border: "1px solid #06b6d4",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  fontSize: "12px",
+                  marginBottom: "14px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#38bdf8", fontWeight: 600 }}>
+                  <span>🐟</span>
+                  <span>TinyFish Live Web Research Completed</span>
+                  <span style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "4px", background: "rgba(6, 182, 212, 0.2)" }}>
+                    {report.tinyFishResearchOutcome.eventsCount} events
+                  </span>
+                </div>
+                <span style={{ color: "#94a3b8", fontSize: "11px" }}>
+                  Verified via isolated live browser session
+                </span>
+              </div>
+            )}
+
             {/* Core Principle Callout */}
             <div
               style={{
@@ -439,7 +479,7 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
                   <span style={{ color: "#94a3b8", display: "block" }}>Payment Demand</span>
                   <strong style={{ color: report.canonicalExtraction.payment.requested ? "#ef4444" : "#10b981" }}>
                     {report.canonicalExtraction.payment.requested
-                      ? `${report.canonicalExtraction.payment.currency || "INR"} ${report.canonicalExtraction.payment.amountString || report.canonicalExtraction.payment.amount}${report.canonicalExtraction.payment.upiId ? ` via UPI (${report.canonicalExtraction.payment.upiId})` : ""}${report.canonicalExtraction.payment.deadline ? ` [Deadline: ${report.canonicalExtraction.payment.deadline}]` : ""}`
+                      ? `${report.canonicalExtraction.payment.amountString && report.canonicalExtraction.payment.amountString !== "Undisclosed" ? `${report.canonicalExtraction.payment.currency || "INR"} ${report.canonicalExtraction.payment.amountString}` : "Mandatory fee demanded (amount undisclosed)"}${report.canonicalExtraction.payment.upiId ? ` via UPI (${report.canonicalExtraction.payment.upiId})` : ""}${report.canonicalExtraction.payment.deadline ? ` [Deadline: ${report.canonicalExtraction.payment.deadline}]` : ""}`
                       : "No fees requested in communication"}
                   </strong>
                 </div>
@@ -557,7 +597,9 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
                 </div>
                 <div style={{ fontSize: "14px", fontWeight: 600, color: report.offerBreakdown.payment.conflictsWithPolicy ? "#ef4444" : "var(--text-primary, #f8fafc)", marginBottom: "4px" }}>
                   {report.offerBreakdown.payment.paymentRequested
-                    ? `${report.offerBreakdown.payment.currency || "INR"} ${report.offerBreakdown.payment.amount} (${report.offerBreakdown.payment.statedReason})`
+                    ? report.offerBreakdown.payment.amount
+                      ? `${report.offerBreakdown.payment.currency || "INR"} ${report.offerBreakdown.payment.amount} (${report.offerBreakdown.payment.statedReason || "Recruitment fee"})`
+                      : "Mandatory recruitment fee (amount undisclosed in communication)"
                     : "No Fees Detected in Message"}
                 </div>
                 <p style={{ fontSize: "12px", color: "var(--text-secondary, #94a3b8)", margin: "0 0 10px", lineHeight: 1.5 }}>
@@ -570,19 +612,36 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
                 )}
               </div>
 
-              {/* Card 3: Recruiter Affiliation */}
+              {/* Card 3: Recruiter Affiliation & Verification Dimensions */}
               <div style={{ padding: "14px", borderRadius: "8px", background: "rgba(15, 23, 42, 0.6)", border: "1px solid var(--border-subtle, #1e293b)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>
-                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary, #94a3b8)" }}>3. SENDER AFFILIATION</span>
+                  <span style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-secondary, #94a3b8)" }}>3. SENDER & RECRUITER AFFILIATION</span>
                   {getStatusBadge(report.offerBreakdown.sender.affiliationStatus)}
                 </div>
                 <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary, #f8fafc)", marginBottom: "4px" }}>
                   {report.offerBreakdown.sender.claimedRecruiterName || "Could not extract this field — manual review required"}
+                  {report.offerBreakdown.sender.claimedDesignation && ` • ${report.offerBreakdown.sender.claimedDesignation}`}
                   {report.offerBreakdown.sender.senderEmail && ` (${report.offerBreakdown.sender.senderEmail})`}
                 </div>
-                <p style={{ fontSize: "12px", color: "var(--text-secondary, #94a3b8)", margin: 0, lineHeight: 1.5 }}>
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", margin: "6px 0 10px", fontSize: "11px" }}>
+                  <span style={{ padding: "2px 8px", borderRadius: "4px", background: "rgba(148, 163, 184, 0.12)", color: "#cbd5e1", border: "1px solid rgba(148, 163, 184, 0.25)" }}>
+                    Channel: {report.offerBreakdown.sender.communicationChannel || "Unspecified"}
+                  </span>
+                  <span style={{ padding: "2px 8px", borderRadius: "4px", background: report.offerBreakdown.sender.emailDomainMatchesCompany ? "rgba(16, 185, 129, 0.12)" : "rgba(245, 158, 11, 0.12)", color: report.offerBreakdown.sender.emailDomainMatchesCompany ? "#10b981" : "#f59e0b", border: `1px solid ${report.offerBreakdown.sender.emailDomainMatchesCompany ? "#10b981" : "#f59e0b"}` }}>
+                    Domain: {report.offerBreakdown.sender.emailDomainConsistency || (report.offerBreakdown.sender.emailDomainMatchesCompany ? "MATCHED_DOMAIN" : "UNVERIFIED")}
+                  </span>
+                  <span style={{ padding: "2px 8px", borderRadius: "4px", background: "rgba(245, 158, 11, 0.12)", color: "#f59e0b", border: "1px solid #f59e0b" }}>
+                    Identity: {report.offerBreakdown.sender.individualIdentityStatus || "UNVERIFIED"}
+                  </span>
+                </div>
+                <p style={{ fontSize: "12px", color: "var(--text-secondary, #94a3b8)", margin: "0 0 6px", lineHeight: 1.5 }}>
                   {report.offerBreakdown.sender.explanation}
                 </p>
+                {report.offerBreakdown.sender.emailDomainMatchesCompany && (
+                  <div style={{ fontSize: "11px", padding: "6px 8px", background: "rgba(59, 130, 246, 0.08)", borderRadius: "4px", color: "#93c5fd", borderLeft: "2px solid #3b82f6" }}>
+                    ℹ️ Corporate email-domain consistency observed; individual recruiter identity and authorization remain independently unverified.
+                  </div>
+                )}
               </div>
 
               {/* Card 4: Application Portal */}

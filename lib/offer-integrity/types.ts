@@ -29,7 +29,11 @@ export type OfferClaimStatus =
   | "CONFLICTING"
   | "NOT_CHECKED"
   | "CHECK_FAILED"
-  | "INSUFFICIENT_EVIDENCE";
+  | "INSUFFICIENT_EVIDENCE"
+  | "VERIFIED_ACTIVE"
+  | "VERIFIED_CLOSED"
+  | "VERIFIED_EXPIRED"
+  | "PARTIAL_MATCH";
 
 export interface CanonicalOfferExtraction {
   employer: {
@@ -106,8 +110,21 @@ export interface VacancyVerificationDetail {
   officialCareersUrl?: string;
   roleTitle: string;
   isVacancyFound: boolean;
-  vacancyStatus: "SUPPORTED" | "CONTRADICTED" | "UNVERIFIED" | "INSUFFICIENT_EVIDENCE" | "CHECK_FAILED";
+  vacancyStatus:
+    | "VERIFIED_ACTIVE"
+    | "VERIFIED_CLOSED"
+    | "VERIFIED_EXPIRED"
+    | "PARTIAL_MATCH"
+    | "CONTRADICTED"
+    | "UNVERIFIED"
+    | "CHECK_FAILED"
+    | "NOT_CHECKED"
+    | "SUPPORTED"
+    | "INSUFFICIENT_EVIDENCE";
   jobReferenceId?: string;
+  extractedRequisitionId?: string;
+  extractedTitle?: string;
+  listingActive?: boolean;
   eligibility?: string;
   duration?: string;
   matchedListingUrl?: string;
@@ -115,6 +132,8 @@ export interface VacancyVerificationDetail {
   workArrangement?: string;
   location?: string;
   observationTime: string;
+  retrievalTimestamp?: string;
+  sourceUrl?: string;
   sourceAuthority: string;
   explanation: string;
   limitations: string;
@@ -123,11 +142,23 @@ export interface VacancyVerificationDetail {
 
 export interface RecruitmentPolicyVerificationDetail {
   companyName: string;
-  policyStatus: "POLICY_CONFIRMED_NO_FEE" | "NO_POLICY_FOUND" | "POLICY_EXPLICIT_GUIDANCE";
+  policyStatus:
+    | "LIVE_POLICY_CONFIRMED_NO_FEE"
+    | "LIVE_POLICY_EXPLICIT_GUIDANCE"
+    | "CACHED_POLICY_REFERENCE"
+    | "NO_POLICY_FOUND"
+    | "SOURCE_UNAVAILABLE"
+    | "CHECK_FAILED"
+    | "CONFLICTING_POLICY_EVIDENCE"
+    | "POLICY_CONFIRMED_NO_FEE"
+    | "POLICY_EXPLICIT_GUIDANCE";
   hasPublishedNoFeePolicy: boolean;
   policyTitle?: string;
   policyUrl?: string;
   policyQuote?: string;
+  sourceType?: "LIVE_RETRIEVAL" | "CACHED_CATALOG" | "UNAVAILABLE" | "FAILED";
+  retrievalTimestamp?: string;
+  cachedReferenceDate?: string;
   explanation: string;
   sourceAuthority: string;
   observationTime: string;
@@ -137,9 +168,28 @@ export interface RecruitmentPolicyVerificationDetail {
 export interface SenderVerificationDetail {
   claimedRecruiterName?: string;
   claimedDesignation?: string;
+  communicationChannel?: string;
   senderEmail?: string;
   senderPhone?: string;
   emailDomainMatchesCompany: boolean;
+  emailDomainConsistency?:
+    | "MATCHED_DOMAIN"
+    | "DOMAIN_MISMATCH"
+    | "GENERIC_EMAIL_PROVIDER"
+    | "NOT_PROVIDED"
+    | "INVALID_EMAIL";
+  individualIdentityStatus?:
+    | "VERIFIED_IDENTITY"
+    | "PARTIALLY_CORROBORATED"
+    | "UNVERIFIED"
+    | "CONTRADICTED"
+    | "NOT_CHECKED";
+  employerAffiliationStatus?:
+    | "VERIFIED_AFFILIATION"
+    | "SUPPORTED_AFFILIATION"
+    | "UNVERIFIED_AFFILIATION"
+    | "CONTRADICTED_AFFILIATION"
+    | "NOT_CHECKED";
   affiliationStatus: "VERIFIED" | "SUPPORTED" | "UNVERIFIED" | "CONTRADICTED" | "INSUFFICIENT_EVIDENCE";
   explanation: string;
   independentlyEstablished: boolean;
@@ -167,10 +217,17 @@ export interface PaymentRequirementDetail {
   paymentRequested: boolean;
   amount?: string;
   currency?: string;
+  amountDisclosed?: boolean;
+  feeCategory?: string;
+  paymentMethod?: string;
+  upiId?: string;
+  deadline?: string;
+  refundabilityClaimed?: boolean;
+  isMandatory?: boolean;
   statedReason?: string;
   paymentChannel?: string;
   claimedRecipient?: string;
-  paymentStatus: "CONTRADICTED" | "UNVERIFIED" | "NOT_REQUESTED";
+  paymentStatus: "CONTRADICTED" | "UNVERIFIED" | "NOT_REQUESTED" | "OBSERVED";
   explanation: string;
   conflictsWithPolicy: boolean;
   cautionNotice: string;
@@ -190,6 +247,9 @@ export interface OfferIntegrityInput {
   paymentReason?: string;
   allowLiveCrawl?: boolean;
   simulateCheckFailure?: boolean;
+  simulatePolicyFailure?: boolean;
+  simulateTinyFishFailure?: boolean;
+  tinyFishApiKey?: string;
 }
 
 export interface OfferIntegrityReport {
@@ -244,4 +304,12 @@ export interface OfferIntegrityReport {
     independentVerificationSteps: string[];
   };
   investigationLimitations: string[];
+  tinyFishResearchOutcome?: {
+    invoked: boolean;
+    streamingUrl?: string;
+    eventsCount: number;
+    researchCompleted: boolean;
+    sourcesDiscovered: string[];
+    error?: string;
+  };
 }
