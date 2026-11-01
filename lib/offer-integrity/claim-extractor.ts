@@ -1,5 +1,9 @@
 import { OfferIntegrityInput, OfferClaimItem } from "./types";
 import { BRAND_DOMAIN_REGISTRY } from "../policy";
+import {
+  analyzeRecruitmentBehavior,
+  RecruitmentBehaviorAnalysis,
+} from "../recruitment-intelligence";
 
 export interface ExtractedOfferData {
   companyName?: string;
@@ -15,6 +19,8 @@ export interface ExtractedOfferData {
   applicationUrl?: string;
   urgencyText?: string;
   isShortlistedClaim: boolean;
+  noInterviewClaim?: boolean;
+  recruitmentAnalysis: RecruitmentBehaviorAnalysis;
   claims: OfferClaimItem[];
 }
 
@@ -24,6 +30,21 @@ export interface ExtractedOfferData {
 export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferData {
   const text = (input.offerMessage || "").trim();
   const now = new Date().toISOString();
+
+  // Run comprehensive Recruitment Behavior Intelligence Analysis
+  const recruitmentAnalysis = analyzeRecruitmentBehavior({
+    text,
+    claimedCompany: input.claimedCompany,
+    claimedRole: input.claimedRole,
+    recruiterName: input.recruiterName,
+    recruiterDesignation: input.recruiterDesignation,
+    senderEmail: input.senderEmail,
+    senderPhone: input.senderPhone,
+    paymentAmount: input.paymentAmount,
+    paymentReason: input.paymentReason,
+    applicationUrl: input.applicationUrl,
+    vacancyUrl: input.vacancyUrl,
+  });
 
   // 1. Company Identification
   let companyName = input.claimedCompany?.trim();
@@ -47,7 +68,7 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
 
     // Heuristic company matching if still missing
     if (!companyName) {
-      const compMatch = text.match(/(?:at|with|from|joining)\s+([A-Z][A-Za-z0-9&.\s]{2,25}?)(?:\s+(?:team|careers|department|technologies|corporation|inc|ltd|limited|technologies|solutions|\.|\,))/i);
+      const compMatch = text.match(/(?:at|with|from|joining)\s+([A-Z][A-Za-z0-9&.\s]{2,25}?)(?:\s+(?:team|careers|department|technologies|corporation|inc|ltd|limited|solutions|\.|\,))/i);
       if (compMatch && compMatch[1]) {
         companyName = compMatch[1].trim();
       }
@@ -79,21 +100,24 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
 
   // 3. Recruiter Name & Designation
   let recruiterName = input.recruiterName?.trim();
-  let recruiterDesignation = input.recruiterDesignation?.trim();
-
   if (!recruiterName) {
     const recruiterMatch =
       text.match(/(?:Contact|I\s+am|This\s+is|from|reach\s+out\s+to)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*,?\s*(?:from|HR|Talent|Recruiter|Campus|Hiring)/i) ||
       text.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\s*,\s*(?:Campus\s+Recruiter|HR|Talent|Technical\s+Recruiter)/i);
     if (recruiterMatch && recruiterMatch[1]) {
       recruiterName = recruiterMatch[1].trim();
+    } else {
+      recruiterName = recruitmentAnalysis.recruiter.name;
     }
   }
 
+  let recruiterDesignation = input.recruiterDesignation?.trim();
   if (!recruiterDesignation) {
-    const desigMatch = text.match(/(Campus\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations)/i);
+    const desigMatch = text.match(/(Campus\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations|Recruitment\s+Coordinator)/i);
     if (desigMatch && desigMatch[1]) {
       recruiterDesignation = desigMatch[1].trim();
+    } else {
+      recruiterDesignation = recruitmentAnalysis.recruiter.designation;
     }
   }
 
@@ -114,39 +138,11 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     }
   }
 
-  // 5. Payment Amount, Currency & Purpose
-  let paymentAmount = input.paymentAmount?.trim();
-  let paymentCurrency: string | undefined;
-  let paymentReason = input.paymentReason?.trim();
-  let paymentChannel: string | undefined;
-
-  // Regex to extract ₹999, INR 999, Rs. 999, $500, etc.
-  const payRegex = /(?:pay|deposit|fee|charge|transfer|send)\s+(?:of\s+)?(₹|INR|Rs\.?|\$|USD)\s*([0-9,]+(?:\.[0-9]{2})?)/i;
-  const payMatch = text.match(payRegex) || text.match(/(₹|INR|Rs\.?|\$|USD)\s*([0-9,]+(?:\.[0-9]{2})?)\s*(?:to\s+(?:reserve|pay|confirm|register))/i);
-
-  if (payMatch) {
-    paymentCurrency = payMatch[1].toUpperCase().replace("RS.", "INR").replace("RS", "INR");
-    if (paymentCurrency === "₹") paymentCurrency = "INR";
-    if (paymentCurrency === "$") paymentCurrency = "USD";
-    paymentAmount = payMatch[2].replace(/,/g, "");
-  }
-
-  if (!paymentReason) {
-    const reasonMatch = text.match(/(?:to\s+(?:reserve|confirm|register|book)\s+(?:your\s+)?(?:interview\s+slot|slot|seat|internship|candidacy|training))/i);
-    if (reasonMatch && reasonMatch[0]) {
-      paymentReason = reasonMatch[0].trim();
-    } else if (text.match(/(?:registration\s+fee|security\s+deposit|equipment\s+deposit|training\s+fee|documentation\s+fee)/i)) {
-      paymentReason = text.match(/(?:registration\s+fee|security\s+deposit|equipment\s+deposit|training\s+fee|documentation\s+fee)/i)![0];
-    }
-  }
-
-  // UPI or Payment channel detection
-  const upiMatch = text.match(/(?:UPI|GPay|PhonePe|Paytm)\s+(?:to|ID|handle)?\s*([a-zA-Z0-9.\-_]{2,256}@[a-zA-Z]{2,64})/i);
-  if (upiMatch) {
-    paymentChannel = upiMatch[0].trim();
-  } else if (/UPI|GPay|PhonePe|Paytm|Crypto|Bank\s+Transfer/i.test(text)) {
-    paymentChannel = "Direct P2P Transfer";
-  }
+  // 5. Payment Amount, Currency & Purpose (Enhanced via Recruitment Intelligence)
+  const paymentAmount = input.paymentAmount?.trim() || recruitmentAnalysis.fee.amount;
+  const paymentCurrency = recruitmentAnalysis.fee.currency || "INR";
+  const paymentReason = input.paymentReason?.trim() || recruitmentAnalysis.fee.reason || "Registration and onboarding fee";
+  const paymentChannel = recruitmentAnalysis.fee.paymentMethod || "Direct P2P Transfer";
 
   // 6. Application / Vacancy URL
   let applicationUrl = input.applicationUrl?.trim() || input.vacancyUrl?.trim();
@@ -157,21 +153,15 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     }
   }
 
-  // 7. Urgency
-  let urgencyText: string | undefined;
-  const urgencyMatch =
-    text.match(/(?:within\s+\d+\s+hours?|before\s+\d+:\d+|expires\s+(?:today|soon)|only\s+\d+\s+slots?\s+remaining|immediate\s+confirmation)/i) ||
-    text.match(/\burgent\b/i);
-  if (urgencyMatch) {
-    urgencyText = urgencyMatch[0].trim();
-  }
-
+  // 7. Urgency & Process Anomaly Extraction
+  const urgencyText = recruitmentAnalysis.urgency.deadlineText || undefined;
   const isShortlistedClaim = /(?:congratulations|shortlisted|selected|chosen|qualif(?:y|ied))\s+(?:for|as)/i.test(text);
+  const noInterviewClaim = recruitmentAnalysis.process.noInterviewRequired;
 
-  // 8. Generate Material Offer Claims
+  // 8. Generate Material Offer Claims with Explicit Evidence Provenance
   const claims: OfferClaimItem[] = [];
 
-  // Claim 1: Employer Identity
+  // Claim 1: Employer Identity (UNVERIFIED until corroborated by registry)
   if (companyName) {
     claims.push({
       id: "claim-offer-company",
@@ -186,7 +176,7 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 2: Vacancy Existence
+  // Claim 2: Vacancy Existence (UNVERIFIED until corroborated by portal)
   if (roleTitle) {
     claims.push({
       id: "claim-offer-vacancy",
@@ -201,15 +191,15 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 3: Payment Request / Interview Fee
+  // Claim 3: Payment Request / Interview Fee (Directly OBSERVED in user's message)
   if (paymentAmount) {
-    const formattedFee = `${paymentCurrency || "INR"} ${paymentAmount}`;
+    const formattedFee = `${paymentCurrency} ${paymentAmount}`;
     claims.push({
       id: "claim-offer-payment",
       category: "payment_requirement",
       claimTitle: "Mandatory Interview / Registration Fee",
       extractedValue: `${formattedFee}${paymentReason ? ` (${paymentReason})` : ""}`,
-      status: "UNVERIFIED",
+      status: "OBSERVED",
       observationTime: now,
       explanation: `The offer demands payment of ${formattedFee} prior to interview slot reservation or candidacy onboarding.`,
       unresolvedQuestions: ["Does the employer's published hiring policy allow applicant fees or slot reservation payments?"],
@@ -217,9 +207,15 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 4: Recruiter Identity / Affiliation
-  if (recruiterName || senderEmail) {
-    const recruiterVal = [recruiterName, recruiterDesignation, senderEmail].filter(Boolean).join(" - ");
+  // Claim 4: Recruiter Identity / Affiliation (UNVERIFIED until corroborated by email/directory)
+  if (recruiterName || senderEmail || recruitmentAnalysis.recruiter.handleOrContact) {
+    const recruiterVal = [
+      recruiterName,
+      recruiterDesignation,
+      recruitmentAnalysis.recruiter.handleOrContact ? `via ${recruitmentAnalysis.recruiter.channel || "Messaging"} (${recruitmentAnalysis.recruiter.handleOrContact})` : undefined,
+      senderEmail,
+    ].filter(Boolean).join(" - ");
+
     claims.push({
       id: "claim-offer-recruiter",
       category: "recruiter_affiliation",
@@ -233,7 +229,7 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 5: Application Destination
+  // Claim 5: Application Destination (UNVERIFIED until domain check completes)
   if (applicationUrl) {
     claims.push({
       id: "claim-offer-destination",
@@ -248,14 +244,14 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 6: Shortlisting / Selection
+  // Claim 6: Shortlisting / Selection (OBSERVED in message)
   if (isShortlistedClaim) {
     claims.push({
       id: "claim-offer-shortlist",
       category: "shortlisting_claim",
       claimTitle: "Unsolicited Shortlisting Claim",
       extractedValue: "Candidate shortlisted without prior application",
-      status: "UNVERIFIED",
+      status: "OBSERVED",
       observationTime: now,
       explanation: "The message claims the candidate was shortlisted or selected, often before any formal application or preliminary interview.",
       unresolvedQuestions: ["Did the candidate explicitly submit a verifiable application for this specific role?"],
@@ -263,18 +259,48 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
-  // Claim 7: Urgency
+  // Claim 7: Urgency Window (OBSERVED in message)
   if (urgencyText) {
     claims.push({
       id: "claim-offer-urgency",
       category: "deadline_urgency",
       claimTitle: "Artificial Urgency Window",
       extractedValue: urgencyText,
-      status: "UNVERIFIED",
+      status: "OBSERVED",
       observationTime: now,
       explanation: `Artificial time pressure applied: "${urgencyText}". High-pressure deadlines are frequently used to induce hasty payments.`,
       unresolvedQuestions: ["Is this deadline authentic or an artificial pressure tactic?"],
       suggestedAction: "Legitimate corporate recruiters provide reasonable scheduling windows and never demand instant fee transfer.",
+    });
+  }
+
+  // Claim 8: No Interview Selection Process (OBSERVED in message)
+  if (noInterviewClaim) {
+    claims.push({
+      id: "claim-offer-no-interview",
+      category: "interview_process",
+      claimTitle: "Selection Without Interview Assessment",
+      extractedValue: recruitmentAnalysis.process.quotedText || "No interview required",
+      status: "OBSERVED",
+      observationTime: now,
+      explanation: "The communication asserts candidate selection without any formal technical or behavioral interview.",
+      unresolvedQuestions: ["Does this employer ever hire candidates without an interview?"],
+      suggestedAction: "Independent confirmation through official company careers portal.",
+    });
+  }
+
+  // Claim 9: Offer Letter Paywall (OBSERVED in message)
+  if (recruitmentAnalysis.process.offerLetterPaywall || recruitmentAnalysis.process.employeeIdPaywall) {
+    claims.push({
+      id: "claim-offer-paywall",
+      category: "document_request",
+      claimTitle: "Offer Letter / Employee ID Conditioned on Payment",
+      extractedValue: "Offer letter and employee ID generated only after payment confirmation",
+      status: "OBSERVED",
+      observationTime: now,
+      explanation: "The offer explicitly withholds the offer letter and employee ID until an upfront fee is transferred.",
+      unresolvedQuestions: ["Do legitimate companies condition basic hiring paperwork on candidate payment?"],
+      suggestedAction: "DO NOT PAY. Legitimate employers generate offer letters and IDs without candidate fees.",
     });
   }
 
@@ -292,6 +318,8 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     applicationUrl,
     urgencyText,
     isShortlistedClaim,
+    noInterviewClaim,
+    recruitmentAnalysis,
     claims,
   };
 }

@@ -108,26 +108,53 @@ export function evaluateAllClaims(params: {
           retrievedAt: now,
         };
       }
+
+      const conflictsWithVerifiedPolicy =
+        Boolean(companyIdentity.isRegisteredBrand) ||
+        Boolean(companyIdentity.isOfficialCorporateDomain) ||
+        Boolean(companyIdentity.officialDomains && companyIdentity.officialDomains.length > 0);
+
+      if (conflictsWithVerifiedPolicy) {
+        return {
+          ...claim,
+          evaluation: "Contradicted",
+          explanation: `Contradicted by verified corporate policy: ${companyIdentity.claimedOrganization || "The verified employer"} strictly prohibits candidate registration fees or upfront deposits.`,
+          sourceType: "official_corporate_site",
+          sourceUrl: companyIdentity.officialDomains?.[0] ? `https://${companyIdentity.officialDomains[0]}` : undefined,
+          retrievedAt: now,
+        };
+      }
+
       return {
         ...claim,
-        evaluation: "Contradicted",
-        explanation: "Established employers never demand payment for applications, interviews, training, or equipment.",
+        evaluation: "OBSERVED",
+        explanation: "Direct observation: The submitted message demands an upfront payment. Legitimate corporate employers do not charge candidate fees or onboarding deposits.",
         sourceType: claim.sourceType || "heuristic_rule",
         retrievedAt: now,
       };
     }
 
-    // 4. Guaranteed Hiring Claim
+    // 4. Guaranteed Hiring / No-Interview Claim
     if (claim.category === "guaranteed_hiring") {
       return {
         ...claim,
-        evaluation: "Contradicted",
-        explanation: "Unconditional employment guarantees or skipping interview processes entirely is a hallmark of recruitment scams.",
+        evaluation: "OBSERVED",
+        explanation: "Direct observation: The message asserts selection without formal interview assessment. Legitimate corporate roles require competency evaluation.",
         retrievedAt: now,
       };
     }
 
-    // 5. Sensitive Data Claims
+    // 5. Urgency Window Claim
+    if (claim.category === "urgency") {
+      return {
+        ...claim,
+        evaluation: "OBSERVED",
+        explanation: "Direct observation: Artificial time pressure applied in message. High-pressure deadlines are frequently used to induce hasty payments.",
+        retrievedAt: now,
+      };
+    }
+
+    // 6. Sensitive Data Claims
     if (claim.category === "sensitive_data") {
       return {
         ...claim,
@@ -252,7 +279,11 @@ export function enrichReportWithScamIntelligence(params: {
   // 3. Assemble ScamIntelligence block
   const scamIntelligence: ScamIntelligence = {
     analysisMode: analysisMode || "message",
-    messageExcerpt: messageData.redactedText ? messageData.redactedText.slice(0, 400) : undefined,
+    messageExcerpt: messageData.redactedText
+      ? messageData.redactedText.length > 800
+        ? messageData.redactedText.slice(0, 800) + "..."
+        : messageData.redactedText
+      : undefined,
     extractedUrls: messageData.extractedUrls,
     selectedTargetUrl: report.observedDestination.finalUrl || report.originalUrl,
     companyIdentity,
@@ -260,6 +291,8 @@ export function enrichReportWithScamIntelligence(params: {
     recruitmentFeeWarning: messageData.recruitmentFeeWarning,
     paymentRisks: messageData.paymentRisks,
     sensitiveDataRequests: messageData.sensitiveDataRequests,
+    recruitmentIndicators: messageData.recruitmentIndicators || [],
+    recruitmentBehavior: messageData.recruitmentAnalysis,
     claims: evaluatedClaims,
     independentVerificationRoutes: independentRoutes,
     privacyRedactionsApplied: messageData.appliedRedactions,
@@ -293,6 +326,55 @@ export function enrichReportWithScamIntelligence(params: {
     }
   }
 
+  // Integrate recruitment behavioral indicators into warning signs & evidence
+  if (messageData.recruitmentAnalysis?.urgency.detected) {
+    const warnLabel = `Payment Urgency: ${messageData.recruitmentAnalysis.urgency.deadlineText}`;
+    if (!updatedWarningSigns.includes(warnLabel)) {
+      updatedWarningSigns.push(warnLabel);
+      updatedEvidenceItems.push({
+        id: `finding-${updatedEvidenceItems.length + 1}-payment-urgency`,
+        label: "Artificial Payment Urgency",
+        detail: `Payment deadline enforced: "${messageData.recruitmentAnalysis.urgency.deadlineText}". High-pressure deadlines are frequently used to induce hasty payments.`,
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
+  }
+
+  if (messageData.recruitmentAnalysis?.process.noInterviewRequired) {
+    const warnLabel = "Selection without formal interview assessment";
+    if (!updatedWarningSigns.includes(warnLabel)) {
+      updatedWarningSigns.push(warnLabel);
+      updatedEvidenceItems.push({
+        id: `finding-${updatedEvidenceItems.length + 1}-no-interview`,
+        label: "Selection Without Interview Assessment",
+        detail: messageData.recruitmentAnalysis.process.quotedText || "No interview required for this position",
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
+  }
+
+  if (messageData.recruitmentAnalysis?.recruiter.isPersonalMessagingChannel) {
+    const warnLabel = `Unverified recruiter contact channel (${messageData.recruitmentAnalysis.recruiter.channel})`;
+    if (!updatedWarningSigns.includes(warnLabel)) {
+      updatedWarningSigns.push(warnLabel);
+      updatedEvidenceItems.push({
+        id: `finding-${updatedEvidenceItems.length + 1}-recruiter-channel`,
+        label: "Unverified Recruiter Contact Channel",
+        detail: messageData.recruitmentAnalysis.recruiter.explanation,
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
+  }
+
   // 5. Integrate identity mismatch findings into primary report
   if (companyIdentity.status === "Identity mismatch") {
     const mismatchItem: Finding = {
@@ -316,20 +398,39 @@ export function enrichReportWithScamIntelligence(params: {
     }
   }
 
-  // 6. Harmonize overall risk outcome
+  // 6. Harmonize overall risk outcome & deterministic scoring
   let finalRiskOutcome = report.riskOutcome;
   let finalThreatLikelihood = report.threatLikelihood;
+  let finalConsequenceImpact = report.consequenceImpact;
   let finalOutcomeReason = report.outcomeReason;
 
-  if (messageData.recruitmentFeeWarning?.detected && companyIdentity.status === "Identity mismatch") {
+  const hasFee = Boolean(messageData.recruitmentFeeWarning?.detected);
+  const hasUrgency = Boolean(messageData.recruitmentAnalysis?.urgency.detected);
+  const hasNoInterview = Boolean(messageData.recruitmentAnalysis?.process.noInterviewRequired);
+  const hasUnverifiedRecruiter = Boolean(messageData.recruitmentAnalysis?.recruiter.isPersonalMessagingChannel);
+  const isReservedDest =
+    report.observedDestination?.finalHost?.endsWith(".example") ||
+    report.originalUrl?.includes(".example") ||
+    report.observedDestination?.submittedHost?.endsWith(".example");
+
+  if (hasFee && companyIdentity.status === "Identity mismatch") {
     finalRiskOutcome = "High risk";
     finalThreatLikelihood = "High";
-    finalOutcomeReason = `High-risk employment deception detected: message demands recruitment fee or deposit ("${messageData.recruitmentFeeWarning.quotedText}") while directing to an unverified domain that does not belong to ${companyIdentity.claimedOrganization}.`;
-  } else if (messageData.recruitmentFeeWarning?.detected) {
-    if (finalRiskOutcome === "Low observed risk" || finalRiskOutcome === "Unknown") {
+    finalConsequenceImpact = "Severe";
+    finalOutcomeReason = `High-risk employment deception detected: message demands recruitment fee or deposit ("${messageData.recruitmentFeeWarning!.quotedText}") while directing to an unverified domain that does not belong to ${companyIdentity.claimedOrganization}.`;
+  } else if (hasFee) {
+    // If fee is demanded, calculate consequence impact based on financial loss & credential exposure
+    finalConsequenceImpact = "High";
+    if (hasUrgency && (hasNoInterview || hasUnverifiedRecruiter || isReservedDest)) {
       finalRiskOutcome = "Suspicious";
       finalThreatLikelihood = "Moderate";
-      finalOutcomeReason = `Suspicious recruitment fee or deposit demand observed in message ("${messageData.recruitmentFeeWarning.quotedText}"). Legitimate employers do not charge candidates fees.`;
+      finalOutcomeReason = `Suspicious recruitment risk detected: The submitted offer contains a mandatory upfront payment request, an urgent deadline, and an unverified recruiter affiliation. The employer and vacancy could not be independently authenticated. Do not pay or share sensitive information until independent verification is complete.`;
+    } else {
+      if (finalRiskOutcome === "Low observed risk" || finalRiskOutcome === "Unknown") {
+        finalRiskOutcome = "Suspicious";
+        finalThreatLikelihood = "Moderate";
+        finalOutcomeReason = `Suspicious recruitment fee or deposit demand observed in message ("${messageData.recruitmentFeeWarning!.quotedText}"). Legitimate employers do not charge candidates fees.`;
+      }
     }
   } else if (companyIdentity.status === "Identity mismatch") {
     if (finalRiskOutcome === "Low observed risk") {
@@ -347,6 +448,30 @@ export function enrichReportWithScamIntelligence(params: {
       finalThreatLikelihood = "Uncertain";
       finalOutcomeReason = `The destination is hosted on a recognized third-party platform (${companyIdentity.platformName || companyIdentity.destinationHost}), but the specific vacancy "${jobVerification.claimedRole || "unspecified"}" could not be confirmed in available page evidence.`;
     }
+  }
+
+  // Harmonize Action Preview & Recommended Action
+  let updatedActionPreview = report.actionPreview;
+  let updatedRecommendedAction = report.recommendedAction;
+
+  if (hasFee) {
+    updatedRecommendedAction =
+      "DO NOT PAY. Never transfer funds via UPI, QR code, or payment links for job selection or onboarding. Independently contact the claimed employer through published official directories.";
+    updatedActionPreview = {
+      proposedAction: "Reviewing unsolicited employment offer and payment demand.",
+      consequenceIfProceed: `Transferring ${messageData.recruitmentAnalysis?.fee.currency || "INR"} ${messageData.recruitmentAnalysis?.fee.amount || "funds"} creates severe financial loss and credential exposure risk.`,
+      riskFactors: [
+        `Mandatory recruitment fee requested: ${messageData.recruitmentAnalysis?.fee.currency || "INR"} ${messageData.recruitmentAnalysis?.fee.amount || "2,999"}.`,
+        "Direct peer-to-peer or UPI payment channel specified.",
+        "Employer and vacancy authenticity unverified.",
+      ],
+    };
+  } else if (isReservedDest) {
+    updatedActionPreview = {
+      proposedAction: "Reviewing offer with synthetic documentation destination (.example).",
+      consequenceIfProceed: "The destination is an officially reserved example domain (RFC 2606) and cannot be an operational careers portal.",
+      riskFactors: ["Destination domain is a reserved example namespace."],
+    };
   }
 
   // 7. Ensure complete evidence provenance on all findings
@@ -392,7 +517,10 @@ export function enrichReportWithScamIntelligence(params: {
     evidenceItems: updatedEvidenceItems,
     riskOutcome: finalRiskOutcome,
     threatLikelihood: finalThreatLikelihood,
+    consequenceImpact: finalConsequenceImpact,
     outcomeReason: finalOutcomeReason,
+    recommendedAction: updatedRecommendedAction,
+    actionPreview: updatedActionPreview,
     scamIntelligence,
     extractedUrls: messageData.extractedUrls,
     selectedTargetUrl: report.observedDestination.finalUrl || report.originalUrl,
@@ -429,6 +557,9 @@ export function createTextOnlyReport(params: {
   const hasFee = Boolean(messageData.recruitmentFeeWarning?.detected);
   const hasPay = messageData.paymentRisks.length > 0;
   const hasSens = messageData.sensitiveDataRequests.length > 0;
+  const hasUrgency = Boolean(messageData.recruitmentAnalysis?.urgency.detected);
+  const hasNoInterview = Boolean(messageData.recruitmentAnalysis?.process.noInterviewRequired);
+  const hasUnverifiedRecruiter = Boolean(messageData.recruitmentAnalysis?.recruiter.isPersonalMessagingChannel);
 
   let riskOutcome: InvestigationReport["riskOutcome"] = "Unknown";
   let threatLikelihood: InvestigationReport["threatLikelihood"] = "Uncertain";
@@ -442,29 +573,84 @@ export function createTextOnlyReport(params: {
     riskOutcome = "Suspicious";
     threatLikelihood = "Moderate";
     consequenceImpact = "High";
-    outcomeReason = `Upfront recruitment fee demanded in message text: "${messageData.recruitmentFeeWarning!.quotedText}".`;
+    outcomeReason = hasUrgency && (hasNoInterview || hasUnverifiedRecruiter)
+      ? "The submitted offer contains a mandatory upfront payment request, an urgent deadline, and an unverified recruiter affiliation. The employer and vacancy could not be independently authenticated. Do not pay or share sensitive information until independent verification is complete."
+      : `Upfront recruitment fee demanded in message text: "${messageData.recruitmentFeeWarning!.quotedText}". Legitimate corporate employers never charge candidate fees or onboarding deposits.`;
+
     warningSigns.push(`Recruitment Fee Demanded: ${messageData.recruitmentFeeWarning!.explanation}`);
     evidenceItems.push({
+      id: `finding-${evidenceItems.length + 1}-recruitment-fee-demanded`,
       label: "Recruitment Fee Demanded in Message",
       detail: messageData.recruitmentFeeWarning!.quotedText,
       kind: "warning",
       provenance: "page_content",
+      evidenceNature: "user_input_assertion",
+      sourceType: "heuristic_rule",
+      snippet: messageData.recruitmentFeeWarning!.quotedText,
+      rationale: messageData.recruitmentFeeWarning!.explanation,
+      limitations: "Direct observation from user-submitted message text.",
     });
+
+    if (hasUrgency) {
+      warningSigns.push(`Payment Urgency: ${messageData.recruitmentAnalysis!.urgency.deadlineText}`);
+      evidenceItems.push({
+        id: `finding-${evidenceItems.length + 1}-payment-urgency`,
+        label: "Artificial Payment Urgency",
+        detail: `Payment deadline enforced: "${messageData.recruitmentAnalysis!.urgency.deadlineText}". High-pressure deadlines are frequently used to induce hasty payments.`,
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
+
+    if (hasNoInterview) {
+      warningSigns.push("Selection without formal interview assessment");
+      evidenceItems.push({
+        id: `finding-${evidenceItems.length + 1}-no-interview`,
+        label: "Selection Without Interview Assessment",
+        detail: messageData.recruitmentAnalysis!.process.quotedText || "No interview required for this position",
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
+
+    if (hasUnverifiedRecruiter) {
+      warningSigns.push(`Unverified recruiter contact channel (${messageData.recruitmentAnalysis!.recruiter.channel})`);
+      evidenceItems.push({
+        id: `finding-${evidenceItems.length + 1}-recruiter-channel`,
+        label: "Unverified Recruiter Contact Channel",
+        detail: messageData.recruitmentAnalysis!.recruiter.explanation,
+        kind: "warning",
+        provenance: "page_content",
+        evidenceNature: "user_input_assertion",
+        sourceType: "heuristic_rule",
+      });
+    }
   } else if (hasPay || hasSens) {
     riskOutcome = "Suspicious";
     threatLikelihood = "Moderate";
+    consequenceImpact = "High";
     outcomeReason = "Message requests sensitive credentials or direct payments without a verified corporate destination.";
   }
 
   const scamIntelligence: ScamIntelligence = {
     analysisMode: "message",
-    messageExcerpt: messageData.redactedText.slice(0, 400),
+    messageExcerpt: messageData.redactedText
+      ? messageData.redactedText.length > 800
+        ? messageData.redactedText.slice(0, 800) + "..."
+        : messageData.redactedText
+      : undefined,
     extractedUrls: [],
     companyIdentity,
     jobVerification,
     recruitmentFeeWarning: messageData.recruitmentFeeWarning,
     paymentRisks: messageData.paymentRisks,
     sensitiveDataRequests: messageData.sensitiveDataRequests,
+    recruitmentIndicators: messageData.recruitmentIndicators || [],
+    recruitmentBehavior: messageData.recruitmentAnalysis,
     claims: evaluatedClaims,
     independentVerificationRoutes: independentRoutes,
     privacyRedactionsApplied: messageData.appliedRedactions,
@@ -524,10 +710,14 @@ export function createTextOnlyReport(params: {
     actionPreview: {
       proposedAction: "Evaluating message text claims.",
       consequenceIfProceed: hasFee
-        ? "Sending money for a job or internship offer carries extreme risk of financial theft."
+        ? `Transferring ${messageData.recruitmentAnalysis?.fee.currency || "INR"} ${messageData.recruitmentAnalysis?.fee.amount || "funds"} creates severe financial loss and credential exposure risk.`
         : "Proceed with caution. Independently verify the employer before sharing documents.",
       riskFactors: hasFee
-        ? ["Recruitment fee or security deposit requested in message."]
+        ? [
+            `Mandatory recruitment fee requested: ${messageData.recruitmentAnalysis?.fee.currency || "INR"} ${messageData.recruitmentAnalysis?.fee.amount || "fee"}.`,
+            "Direct peer-to-peer or UPI payment channel specified.",
+            "Recruiter identity and company requisition unverified.",
+          ]
         : ["Unverified message sender."],
     },
     riskOutcome,
@@ -535,7 +725,7 @@ export function createTextOnlyReport(params: {
     consequenceImpact,
     outcomeReason,
     recommendedAction: hasFee
-      ? "DO NOT SEND MONEY. Contact the company's verified careers department directly."
+      ? "DO NOT PAY. Never transfer funds via UPI, QR code, or payment links for job selection or onboarding. Independently contact the claimed employer through published official directories."
       : "Verify the sender through an official company channel before responding.",
     limitations: [
       "Analysis is based entirely on user-provided text; no external website was visited.",

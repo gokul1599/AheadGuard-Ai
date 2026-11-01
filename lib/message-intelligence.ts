@@ -4,6 +4,11 @@ import {
   RecruitmentFeeWarning,
   SensitiveDataRequestItem,
 } from "./types";
+import {
+  analyzeRecruitmentBehavior,
+  RecruitmentBehaviorAnalysis,
+  RecruitmentRiskIndicatorItem,
+} from "./recruitment-intelligence";
 
 export interface ExtractedMessageData {
   originalText: string;
@@ -16,6 +21,8 @@ export interface ExtractedMessageData {
   recruitmentFeeWarning?: RecruitmentFeeWarning;
   paymentRisks: PaymentRiskItem[];
   sensitiveDataRequests: SensitiveDataRequestItem[];
+  recruitmentAnalysis?: RecruitmentBehaviorAnalysis;
+  recruitmentIndicators?: RecruitmentRiskIndicatorItem[];
   claims: ClaimRecord[];
   appliedRedactions: string[];
 }
@@ -258,7 +265,27 @@ export function extractCompensation(text: string): string | undefined {
 export function detectRecruitmentFee(text: string): RecruitmentFeeWarning | undefined {
   if (!text) return undefined;
 
-  // Exact matching for fee demand patterns
+  // 1. Primary: Run Dedicated Recruitment Behavior Intelligence Engine
+  const analysis = analyzeRecruitmentBehavior({ text });
+  if (analysis.fee.detected && !analysis.isOptionalTrainingNotice) {
+    let feeType: RecruitmentFeeWarning["feeType"] = "unspecified_fee";
+    if (analysis.fee.category === "REGISTRATION_AND_ONBOARDING") feeType = "application_fee";
+    else if (analysis.fee.category === "SECURITY_DEPOSIT") feeType = "security_deposit";
+    else if (analysis.fee.category === "TRAINING_AND_COURSE") feeType = "training_fee";
+    else if (analysis.fee.category === "EQUIPMENT_AND_LAPTOP") feeType = "equipment_fee";
+    else if (analysis.fee.category === "INTERVIEW_SLOT_RESERVATION") feeType = "interview_fee";
+
+    const amountStr = analysis.fee.amount ? ` (${analysis.fee.currency || "INR"} ${analysis.fee.amount})` : "";
+    return {
+      detected: true,
+      feeType,
+      quotedText: analysis.fee.quotedText || `Recruitment fee demanded${amountStr}`,
+      explanation: `Mandatory recruitment or onboarding fee requested${amountStr}. Legitimate corporate employers never charge candidate registration, interview, or equipment deposits.`,
+      riskLevel: "High",
+    };
+  }
+
+  // Exact matching for legacy fee demand patterns
   const feePatterns: Array<{
     type: RecruitmentFeeWarning["feeType"];
     regex: RegExp;
@@ -356,6 +383,9 @@ export function detectPaymentRisks(text: string, targetUrl?: string): PaymentRis
   if (!text) return [];
   const risks: PaymentRiskItem[] = [];
 
+  // Behavioral intelligence analysis
+  const analysis = analyzeRecruitmentBehavior({ text, applicationUrl: targetUrl });
+
   // 1. Fee for job / employment
   const feeWarning = detectRecruitmentFee(text);
   if (feeWarning) {
@@ -370,39 +400,44 @@ export function detectPaymentRisks(text: string, targetUrl?: string): PaymentRis
     });
   }
 
-  // 2. Personal P2P / UPI transfer requests
+  // 2. Personal P2P / UPI transfer requests (handles handles and direct coordinator UPI mentions)
   const p2pRegex =
     /(?:(?:send\s+(?:money|funds|payment)\s+to|pay\s+via|transfer\s+to)\s+(?:gpay|phonepe|paytm|upi(?:\s+id)?|paypal|crypto|bitcoin|usdt|wire|western\s+union|account\s+number)|via\s+(?:gpay|phonepe|paytm|upi(?:\s+id)?|paypal|crypto|bitcoin|usdt)\s+(?:to\s+)?)\b[:\s]*([a-zA-Z0-9._\-@]+)/i;
   const p2pMatch = text.match(p2pRegex);
-  if (p2pMatch) {
-    const handle = p2pMatch[1]?.trim();
-    const idx = p2pMatch.index ?? 0;
-    const start = Math.max(0, text.lastIndexOf(".", idx) + 1);
-    const end = text.indexOf(".", idx + p2pMatch[0].length);
-    const quote = text.substring(start, end !== -1 ? end : undefined).trim();
+  const upiCoordinatorMatch = text.match(/(?:through|via|to)\s+(?:the\s+)?(?:UPI\s+ID|GPay|PhonePe|Paytm)\s+(?:shared\s+by|of|to)?/i) ||
+    /through\s+the\s+UPI\s+ID/i.test(text);
+
+  if (p2pMatch || upiCoordinatorMatch || analysis.fee.paymentMethod === "UPI") {
+    const handle = p2pMatch ? p2pMatch[1]?.trim() : "Recruitment coordinator UPI ID";
+    const quote = p2pMatch ? p2pMatch[0].trim() : "UPI ID shared by your recruitment coordinator";
 
     risks.push({
       id: "pay-risk-p2p",
       paymentType: "p2p_transfer",
-      quotedText: quote.length > 0 ? quote : p2pMatch[0].trim(),
+      quotedText: quote,
       claimedRecipient: handle || "Unverified personal account",
       cautionReason: "Payment instructions direct money to peer-to-peer wallets, individual UPI handles, or crypto accounts rather than corporate billing systems.",
       destinationInvestigated: Boolean(targetUrl),
-      evidenceSummary: `Direct payment channel specified: "${quote || p2pMatch[0].trim()}"`,
+      evidenceSummary: `Direct payment channel specified: "${quote}"`,
       recommendedVerificationStep: "Corporate fees or services are never billed to personal UPI, cryptocurrency wallets, or peer-to-peer accounts.",
     });
   }
 
-  // 3. Urgent advance payment
-  const urgentPayMatch = text.match(/(?:urgent|immediate|within\s+\d+\s+(?:hours?|minutes?))\s+(?:payment|transfer|deposit)\s+(?:is\s+)?required/i);
+  // 3. Urgent advance payment (handles "within 24 hours" and reversed phrasing)
+  const urgentPayMatch =
+    text.match(/(?:urgent|immediate|within\s+\d+\s+(?:hours?|minutes?))\s+(?:payment|transfer|deposit)\s+(?:is\s+)?required/i) ||
+    text.match(/(?:payment|transfer|deposit)\s+(?:must\s+be\s+completed|is\s+required)\s+within\s+\d+\s+hours?/i) ||
+    (analysis.urgency.detected ? analysis.urgency.quotedText : null);
+
   if (urgentPayMatch) {
+    const uQuote = typeof urgentPayMatch === "string" ? urgentPayMatch : urgentPayMatch[0].trim();
     risks.push({
       id: "pay-risk-urgent",
       paymentType: "urgent_fee",
-      quotedText: urgentPayMatch[0].trim(),
+      quotedText: uQuote,
       cautionReason: "Urgency tactics are used to bypass critical thinking and force immediate fund transfers.",
       destinationInvestigated: Boolean(targetUrl),
-      evidenceSummary: `Urgent payment pressure: "${urgentPayMatch[0].trim()}"`,
+      evidenceSummary: `Urgent payment pressure: "${uQuote}"`,
       recommendedVerificationStep: "Pause and independently contact the purported organization via their official published support number.",
     });
   }
@@ -478,8 +513,9 @@ export function extractClaimsFromMessage(params: {
   feeWarning?: RecruitmentFeeWarning;
   paymentRisks: PaymentRiskItem[];
   sensitiveDataRequests: SensitiveDataRequestItem[];
+  recruitmentAnalysis?: RecruitmentBehaviorAnalysis;
 }): ClaimRecord[] {
-  const { text, claimedOrg, claimedRole, compensation, feeWarning, paymentRisks, sensitiveDataRequests } = params;
+  const { text, claimedOrg, claimedRole, compensation, feeWarning, paymentRisks, sensitiveDataRequests, recruitmentAnalysis } = params;
   const claims: ClaimRecord[] = [];
   const now = new Date().toISOString();
 
@@ -587,6 +623,48 @@ export function extractClaimsFromMessage(params: {
     });
   }
 
+  // 8. Urgency Window Claim
+  if (recruitmentAnalysis?.urgency.detected) {
+    claims.push({
+      id: "claim-urgency-window",
+      category: "urgency",
+      claimText: `Strict payment deadline: "${recruitmentAnalysis.urgency.deadlineText}".`,
+      claimedOrganization: claimedOrg,
+      evaluation: "OBSERVED",
+      explanation: "Artificial urgency applied to candidate. High-pressure deadlines are frequently used to induce hasty payments without independent verification.",
+      provenance: "message_text",
+      retrievedAt: now,
+    });
+  }
+
+  // 9. No Interview Process Claim
+  if (recruitmentAnalysis?.process.noInterviewRequired) {
+    claims.push({
+      id: "claim-no-interview",
+      category: "guaranteed_hiring",
+      claimText: `Selection without interview assessment: "${recruitmentAnalysis.process.quotedText || "No interview required"}".`,
+      claimedOrganization: claimedOrg,
+      evaluation: "OBSERVED",
+      explanation: "Candidate selected without formal interview assessment. Legitimate corporate engineering and data roles require evaluation.",
+      provenance: "message_text",
+      retrievedAt: now,
+    });
+  }
+
+  // 10. Recruiter Channel Claim
+  if (recruitmentAnalysis?.recruiter.isPersonalMessagingChannel) {
+    claims.push({
+      id: "claim-recruiter-channel",
+      category: "contact_info",
+      claimText: `Recruiter contacting via personal messaging (${recruitmentAnalysis.recruiter.channel}: ${recruitmentAnalysis.recruiter.handleOrContact || "private handle"}).`,
+      claimedOrganization: claimedOrg,
+      evaluation: "UNVERIFIED",
+      explanation: recruitmentAnalysis.recruiter.explanation,
+      provenance: "message_text",
+      retrievedAt: now,
+    });
+  }
+
   return claims;
 }
 
@@ -614,14 +692,22 @@ export function analyzeMessageText(params: {
   const claimedJobRole = userSpecifiedRole?.trim() || extractClaimedJobRole(rawMessage);
   const claimedCompensation = extractCompensation(rawMessage);
 
-  // 4. Recruitment Fee & Payment Risks
+  // 4. Recruitment Behavior Intelligence Analysis
+  const recruitmentAnalysis = analyzeRecruitmentBehavior({
+    text: rawMessage,
+    claimedCompany: claimedOrg,
+    claimedRole: claimedJobRole,
+    applicationUrl: targetUrl || singleExtractedUrl,
+  });
+
+  // 5. Recruitment Fee & Payment Risks
   const feeWarning = detectRecruitmentFee(rawMessage);
   const paymentRisks = detectPaymentRisks(rawMessage, targetUrl || singleExtractedUrl);
 
-  // 5. Sensitive Data Requests
+  // 6. Sensitive Data Requests
   const sensitiveDataRequests = detectSensitiveDataRequests(rawMessage);
 
-  // 6. Structured Claims
+  // 7. Structured Claims
   const claims = extractClaimsFromMessage({
     text: rawMessage,
     claimedOrg,
@@ -630,6 +716,7 @@ export function analyzeMessageText(params: {
     feeWarning,
     paymentRisks,
     sensitiveDataRequests,
+    recruitmentAnalysis,
   });
 
   return {
@@ -643,6 +730,8 @@ export function analyzeMessageText(params: {
     recruitmentFeeWarning: feeWarning,
     paymentRisks,
     sensitiveDataRequests,
+    recruitmentAnalysis,
+    recruitmentIndicators: recruitmentAnalysis.indicators,
     claims,
     appliedRedactions: redactions,
   };

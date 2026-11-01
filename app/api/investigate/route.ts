@@ -180,6 +180,10 @@ export async function POST(request: Request) {
       targetUrl: explicitTargetUrl,
       claimedOrganization,
       claimedJobRole,
+      recruiterName,
+      senderEmail,
+      paymentAmount,
+      paymentReason,
       officialCareersUrl,
       analysisMode,
     } = parseResult.data;
@@ -311,14 +315,31 @@ export async function POST(request: Request) {
         jobVerification,
       });
 
-      if (analysisMode === "job" || claimedJobRole || /intern(?:ship)?|job\s+offer|shortlisted/i.test(rawMessage)) {
+      if (analysisMode === "job" || claimedJobRole || /intern(?:ship)?|job\s+offer|shortlisted|recruitment/i.test(rawMessage)) {
         try {
           const offerReport = await evaluateOfferIntegrity({
             offerMessage: rawMessage,
             claimedCompany: claimedOrganization || messageData.claimedOrganization,
             claimedRole: claimedJobRole || messageData.claimedJobRole,
+            recruiterName,
+            senderEmail,
+            paymentAmount,
+            paymentReason,
+            applicationUrl: explicitTargetUrl,
+            vacancyUrl: officialCareersUrl,
           });
           textReport.offerIntegrity = offerReport;
+          if (offerReport.riskOutcome === "Suspicious" && textReport.riskOutcome === "Unknown") {
+            textReport.riskOutcome = "Suspicious";
+            textReport.threatLikelihood = offerReport.threatLikelihood;
+            textReport.consequenceImpact = offerReport.consequenceImpact;
+            textReport.outcomeReason = offerReport.overallAssessment.verdictSummary;
+          } else if (offerReport.riskOutcome === "High risk") {
+            textReport.riskOutcome = "High risk";
+            textReport.threatLikelihood = "High";
+            textReport.consequenceImpact = "Severe";
+            textReport.outcomeReason = offerReport.overallAssessment.verdictSummary;
+          }
         } catch {
           // non-fatal
         }
@@ -374,7 +395,7 @@ export async function POST(request: Request) {
     }
 
     // Helper to synthesize final scam & identity intelligence
-    const finalizeReport = (baseReport: InvestigationReport): InvestigationReport => {
+    const finalizeReport = async (baseReport: InvestigationReport): Promise<InvestigationReport> => {
       const companyIdentity = verifyCompanyIdentity({
         claimedOrg: messageData.claimedOrganization || baseReport.claimedOrganization,
         destinationUrl: validation.normalizedUrl,
@@ -404,6 +425,37 @@ export async function POST(request: Request) {
         jobVerification,
         analysisMode: analysisMode || (isExplicitLinkMode ? "link" : "message"),
       });
+
+      // Synchronize with Offer Integrity if this is an employment/internship offer
+      if (analysisMode === "job" || claimedJobRole || /intern(?:ship)?|job\s+offer|shortlisted|recruitment/i.test(rawMessage)) {
+        try {
+          const offerReport = await evaluateOfferIntegrity({
+            offerMessage: rawMessage,
+            claimedCompany: claimedOrganization || messageData.claimedOrganization,
+            claimedRole: claimedJobRole || messageData.claimedJobRole,
+            recruiterName,
+            senderEmail,
+            paymentAmount,
+            paymentReason,
+            applicationUrl: validation.normalizedUrl,
+            vacancyUrl: officialCareersUrl,
+          });
+          enriched.offerIntegrity = offerReport;
+          if (offerReport.riskOutcome === "Suspicious" && enriched.riskOutcome === "Unknown") {
+            enriched.riskOutcome = "Suspicious";
+            enriched.threatLikelihood = offerReport.threatLikelihood;
+            enriched.consequenceImpact = offerReport.consequenceImpact;
+            enriched.outcomeReason = offerReport.overallAssessment.verdictSummary;
+          } else if (offerReport.riskOutcome === "High risk") {
+            enriched.riskOutcome = "High risk";
+            enriched.threatLikelihood = "High";
+            enriched.consequenceImpact = "Severe";
+            enriched.outcomeReason = offerReport.overallAssessment.verdictSummary;
+          }
+        } catch {
+          // non-fatal
+        }
+      }
 
       // Cross-platform TrustGraph ingestion
       try {
@@ -466,7 +518,7 @@ export async function POST(request: Request) {
             tinyFishResult,
           });
 
-          const finalReport = finalizeReport(baseReport);
+          const finalReport = await finalizeReport(baseReport);
 
           // 1. Await Neon persistence before sending the final report to guarantee accurate persistence status
           // Keeping writer open guarantees the serverless context remains active until the write completes or safely times out
@@ -502,7 +554,7 @@ export async function POST(request: Request) {
             },
           });
 
-          const finalizedFailureReport = finalizeReport(failureReport);
+          const finalizedFailureReport = await finalizeReport(failureReport);
 
           await sendEvent({
             type: "error",
@@ -540,7 +592,7 @@ export async function POST(request: Request) {
         tinyFishResult,
       });
 
-      const finalReport = finalizeReport(baseReport);
+      const finalReport = await finalizeReport(baseReport);
 
       // Persist to Neon before returning response (bounded by 5s withTimeout)
       let dbRes: { ok: boolean; error?: string } = { ok: false, error: "Database not configured" };
@@ -571,7 +623,7 @@ export async function POST(request: Request) {
         },
       });
 
-      const finalizedFailureReport = finalizeReport(failureReport);
+      const finalizedFailureReport = await finalizeReport(failureReport);
 
       return jsonResponse(
         request,

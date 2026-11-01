@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { OfferIntegrityInput, OfferIntegrityReport } from "../lib/offer-integrity/types";
 import { FLAGSHIP_SCENARIO_INPUT } from "../lib/offer-integrity/offer-evaluator";
+import { RecruitmentRiskIndicatorsCard } from "./RecruitmentRiskIndicatorsCard";
 
 interface OfferIntegrityCardProps {
   onInvestigateComplete?: (report: OfferIntegrityReport) => void;
@@ -80,9 +81,11 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
 
   const getStatusBadge = (status: string) => {
     switch (status) {
+      case "OBSERVED":
+        return <span className="status-badge badge-observed" style={{ background: "rgba(59, 130, 246, 0.15)", color: "#60a5fa", border: "1px solid #3b82f6" }}>OBSERVED</span>;
       case "SUPPORTED":
       case "VERIFIED":
-        return <span className="status-badge badge-match" style={{ background: "rgba(6, 182, 212, 0.15)", color: "#06b6d4", border: "1px solid #06b6d4" }}>SUPPORTED</span>;
+        return <span className="status-badge badge-match" style={{ background: "rgba(16, 185, 129, 0.15)", color: "#10b981", border: "1px solid #10b981" }}>VERIFIED</span>;
       case "CONTRADICTED":
         return <span className="status-badge badge-mismatch" style={{ background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid #ef4444" }}>CONTRADICTED</span>;
       case "UNVERIFIED":
@@ -97,6 +100,9 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
     }
     if (outcome === "Suspicious") {
       return <span className="risk-level-badge risk-suspicious" style={{ background: "rgba(245, 158, 11, 0.2)", color: "#f59e0b", padding: "6px 14px", borderRadius: "999px", fontWeight: 700, fontSize: "13px", letterSpacing: "0.05em", border: "1px solid #f59e0b" }}>SUSPICIOUS</span>;
+    }
+    if (outcome === "Unknown") {
+      return <span className="risk-level-badge risk-unknown" style={{ background: "rgba(148, 163, 184, 0.2)", color: "#94a3b8", padding: "6px 14px", borderRadius: "999px", fontWeight: 700, fontSize: "13px", letterSpacing: "0.05em", border: "1px solid #94a3b8" }}>UNKNOWN</span>;
     }
     return <span className="risk-level-badge risk-low" style={{ background: "rgba(16, 185, 129, 0.2)", color: "#10b981", padding: "6px 14px", borderRadius: "999px", fontWeight: 700, fontSize: "13px", letterSpacing: "0.05em", border: "1px solid #10b981" }}>LOW OBSERVED RISK</span>;
   };
@@ -372,6 +378,15 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
               🛑 Recommended Action: {report.overallAssessment.recommendedAction}
             </div>
           </div>
+
+          {/* Structured Recruitment Risk Indicators */}
+          {report.recruitmentIndicators && report.recruitmentIndicators.length > 0 && (
+            <RecruitmentRiskIndicatorsCard
+              indicators={report.recruitmentIndicators}
+              claimedCompany={report.input.claimedCompany}
+              claimedRole={report.input.claimedRole}
+            />
+          )}
 
           {/* Navigation Tabs for Details */}
           <div style={{ display: "flex", gap: "8px", borderBottom: "1px solid var(--border-subtle, #1e293b)", paddingBottom: "8px" }}>

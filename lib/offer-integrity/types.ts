@@ -21,12 +21,13 @@ export type OfferClaimCategory =
   | "shortlisting_claim";
 
 export type OfferClaimStatus =
+  | "OBSERVED"
+  | "VERIFIED"
   | "SUPPORTED"
   | "CONTRADICTED"
   | "UNVERIFIED"
   | "CONFLICTING"
-  | "INSUFFICIENT_EVIDENCE"
-  | "VERIFIED";
+  | "INSUFFICIENT_EVIDENCE";
 
 export interface OfferClaimItem {
   id: string;
@@ -154,6 +155,7 @@ export interface OfferIntegrityReport {
     payment: PaymentRequirementDetail;
   };
   claimsLedger: OfferClaimItem[];
+  recruitmentIndicators?: import("../recruitment-intelligence").RecruitmentRiskIndicatorItem[];
   trustGapMapNodes: Array<{
     id: string;
     claim: string;

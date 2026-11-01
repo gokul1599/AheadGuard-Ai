@@ -229,10 +229,6 @@ describe("iOS & Mobile Compatibility: CORS, Origin Normalization & Message Inves
       goalFailed: false,
       eventsCount: 3,
       rawAgentText: "Loaded legitimate application portal with verified SSL certificate.",
-      observedFacts: {
-        pageTitle: "Official Career Portal",
-        visiblePurpose: "Corporate recruitment and candidate onboarding",
-      },
     });
 
     const payload = {
@@ -301,6 +297,7 @@ describe("iOS & Mobile Compatibility: CORS, Origin Normalization & Message Inves
     // Mock TinyFish
     vi.spyOn(tinyfishModule, "executeTinyFishInvestigation").mockResolvedValueOnce({
       success: true,
+      goalFailed: false,
       eventsCount: 1,
       rawAgentText: "Loaded reward verification portal",
     });

@@ -82,7 +82,16 @@ export interface ObservedDestination {
 // SCAM, JOB & IDENTITY VERIFICATION INTELLIGENCE
 // ==========================================
 
-export type ClaimEvaluation = "Supported" | "Contradicted" | "Unverified";
+export type ClaimEvaluation =
+  | "Supported"
+  | "Contradicted"
+  | "Unverified"
+  | "Observed"
+  | "Verified"
+  | "OBSERVED"
+  | "VERIFIED"
+  | "CONTRADICTED"
+  | "UNVERIFIED";
 
 export type ClaimCategory =
   | "employer_identity"
@@ -220,6 +229,8 @@ export interface ScamIntelligence {
   sensitiveDataRequests: SensitiveDataRequestItem[];
   claims: ClaimRecord[];
   independentVerificationRoutes: IndependentVerificationRoute[];
+  recruitmentIndicators?: import("./recruitment-intelligence").RecruitmentRiskIndicatorItem[];
+  recruitmentBehavior?: import("./recruitment-intelligence").RecruitmentBehaviorAnalysis;
   privacyRedactionsApplied: string[];
   disclaimer: string;
 }

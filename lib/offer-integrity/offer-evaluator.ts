@@ -259,51 +259,60 @@ export async function evaluateOfferIntegrity(
   notify("Synthesizing claim-by-claim Trust Gap ledger...");
   const claimsLedger: OfferClaimItem[] = extracted.claims.map((claim) => {
     if (claim.category === "vacancy_existence") {
+      const isVerified = vacancyDetail.isVacancyFound && vacancyDetail.vacancyStatus === "SUPPORTED";
       return {
         ...claim,
-        status: vacancyDetail.vacancyStatus,
-        supportingEvidence: vacancyDetail.isVacancyFound
+        status: vacancyDetail.vacancyStatus || (isVerified ? "SUPPORTED" : "UNVERIFIED"),
+        supportingEvidence: isVerified
           ? `Listing matched on ${vacancyDetail.sourceAuthority}: "${vacancyDetail.matchedListingTitle}"`
           : undefined,
-        sourceUrl: vacancyDetail.matchedListingUrl || vacancyDetail.officialCareersUrl,
+        sourceUrl: isVerified ? (vacancyDetail.matchedListingUrl || vacancyDetail.officialCareersUrl) : undefined,
         sourceAuthority: vacancyDetail.sourceAuthority,
         explanation: vacancyDetail.explanation,
-        unresolvedQuestions: vacancyDetail.isVacancyFound
+        unresolvedQuestions: isVerified
           ? ["Is the sender authorized by the employer to fill this active requisition?"]
           : ["Does this vacancy actually exist outside this message?"],
-        suggestedAction: vacancyDetail.matchedListingUrl
+        suggestedAction: isVerified && vacancyDetail.matchedListingUrl
           ? `Apply directly via the official authenticated listing: ${vacancyDetail.matchedListingUrl}`
           : "Check the employer's official website directly.",
       };
     }
 
     if (claim.category === "payment_requirement" || claim.category === "payment_request") {
-      const claimStatus = paymentDetail.paymentStatus === "NOT_REQUESTED" ? "SUPPORTED" : paymentDetail.paymentStatus;
+      const claimStatus: OfferClaimItem["status"] = paymentDetail.conflictsWithPolicy
+        ? "CONTRADICTED"
+        : paymentDetail.paymentRequested
+        ? "OBSERVED"
+        : "UNVERIFIED";
       return {
         ...claim,
         status: claimStatus,
         contradictingEvidence: paymentDetail.conflictsWithPolicy
           ? `Direct conflict with ${policyDetail.companyName}'s policy: "${policyDetail.policyQuote}"`
-          : "Payment demand contradicts global ethical recruiting standards.",
+          : undefined,
+        supportingEvidence: paymentDetail.paymentRequested && !paymentDetail.conflictsWithPolicy
+          ? `Direct observation from submitted offer message: ${claim.extractedValue}`
+          : undefined,
         sourceUrl: policyDetail.policyUrl,
-        sourceAuthority: policyDetail.sourceAuthority,
+        sourceAuthority: policyDetail.policyUrl ? policyDetail.sourceAuthority : "User Submitted Message",
         explanation: paymentDetail.explanation,
-        unresolvedQuestions: ["Why is a candidate being asked for money when corporate policy strictly forbids fees?"],
+        unresolvedQuestions: ["Why is a candidate being asked for money when corporate policy or industry standards forbid fees?"],
         suggestedAction: "DO NOT PAY. Disregard any payment link or UPI handle.",
       };
     }
 
     if (claim.category === "recruiter_affiliation" || claim.category === "recruiter_identity") {
+      const isAffilVerified = senderDetail.emailDomainMatchesCompany;
       return {
         ...claim,
-        status: senderDetail.affiliationStatus,
-        supportingEvidence: senderDetail.emailDomainMatchesCompany
+        status: isAffilVerified ? "VERIFIED" : "UNVERIFIED",
+        supportingEvidence: isAffilVerified
           ? `Sender domain matches corporate domain.`
           : undefined,
-        contradictingEvidence: !senderDetail.emailDomainMatchesCompany && senderDetail.senderEmail
+        contradictingEvidence: !isAffilVerified && senderDetail.senderEmail
           ? `Sender used personal/unverified domain (@${senderDetail.senderEmail.split("@")[1]}) instead of official corporate domain.`
           : undefined,
-        sourceAuthority: senderDetail.emailDomainMatchesCompany ? "Corporate Domain Match" : "Unverified Message",
+        sourceAuthority: isAffilVerified ? "Corporate Domain Match" : "Unverified Message",
         explanation: senderDetail.explanation,
         unresolvedQuestions: ["Can this person's role be verified via an independent corporate directory?"],
         suggestedAction: senderDetail.recommendedVerificationChannel
@@ -313,31 +322,51 @@ export async function evaluateOfferIntegrity(
     }
 
     if (claim.category === "employer_identity") {
+      const isVerifiedBrand = Boolean(matchedBrand || knownPolicy);
       return {
         ...claim,
-        status: matchedBrand || knownPolicy ? "SUPPORTED" : "UNVERIFIED",
+        status: isVerifiedBrand ? "VERIFIED" : "UNVERIFIED",
         supportingEvidence: matchedBrand
           ? `Recognized corporate entity: ${matchedBrand.canonicalName} (Official domain: ${matchedBrand.approvedDomains[0]})`
           : undefined,
-        sourceUrl: officialCareersUrl,
-        sourceAuthority: "Enterprise Domain Registry",
+        sourceUrl: isVerifiedBrand ? officialCareersUrl : undefined,
+        sourceAuthority: isVerifiedBrand ? "Enterprise Domain Registry" : "Public Web Registry",
         explanation: matchedBrand
           ? `The company "${matchedBrand.canonicalName}" is an authenticated corporate brand.`
-          : `The company identity could not be matched against verified enterprise domain records.`,
+          : `The company identity could not be matched against verified enterprise domain records. This is an unverified identity, not definitive proof of non-existence.`,
         unresolvedQuestions: ["Is the message genuinely sent on behalf of this brand?"],
         suggestedAction: "Check official corporate domain records.",
       };
     }
 
     if (claim.category === "application_destination") {
+      const isDestVerified = destinationDetail.isDomainConsistent && destinationDetail.destinationType === "OFFICIAL_CAREERS_PORTAL";
+      const isReserved = destinationDetail.finalDomain?.endsWith(".example") || destinationDetail.submittedUrl?.includes(".example");
       return {
         ...claim,
-        status: destinationDetail.isDomainConsistent ? "SUPPORTED" : "UNVERIFIED",
+        status: isDestVerified ? "VERIFIED" : "UNVERIFIED",
+        supportingEvidence: isDestVerified ? `Matches verified employer domain.` : undefined,
+        contradictingEvidence: isReserved ? `Destination is in RFC 2606 reserved example namespace (.example) and cannot be an operational careers portal.` : undefined,
         sourceUrl: destinationDetail.normalizedUrl,
         sourceAuthority: destinationDetail.destinationType,
-        explanation: destinationDetail.explanation,
+        explanation: isReserved
+          ? `The destination URL uses the reserved .example top-level domain (RFC 2606), which is synthetic documentation space and not a functioning corporate portal.`
+          : destinationDetail.explanation,
         unresolvedQuestions: ["Does this form collect sensitive candidate PII or fees?"],
-        suggestedAction: "Only submit credentials or personal information on official domains.",
+        suggestedAction: "Only submit credentials or personal information on independently authenticated official domains.",
+      };
+    }
+
+    // Default: claims like urgency, shortlisting, no-interview, paywall are OBSERVED directly from message
+    if (
+      claim.category === "deadline_urgency" ||
+      claim.category === "shortlisting_claim" ||
+      claim.category === "interview_process" ||
+      claim.category === "document_request"
+    ) {
+      return {
+        ...claim,
+        status: "OBSERVED",
       };
     }
 
@@ -425,32 +454,45 @@ export async function evaluateOfferIntegrity(
       : "Your AI checks first. You act with confidence.";
 
   // 8. Safe Action Plan
+  const isReservedDest = destinationDetail.finalDomain?.endsWith(".example") || destinationDetail.submittedUrl?.includes(".example");
+  const verifiedAppRoute =
+    !isReservedDest && vacancyDetail.isVacancyFound && vacancyDetail.matchedListingUrl && !vacancyDetail.matchedListingUrl.includes(".example")
+      ? vacancyDetail.matchedListingUrl
+      : undefined;
+
   const safeActionPlan = {
     primaryWarning: paymentDetail.paymentRequested
       ? `DO NOT PAY THE ${paymentCurrency} ${paymentAmount} FEE UNDER ANY CIRCUMSTANCES.`
       : "Verify sender credentials before submitting sensitive documents.",
     keyRecommendation,
-    verifiedApplicationRoute: vacancyDetail.matchedListingUrl || vacancyDetail.officialCareersUrl,
+    verifiedApplicationRoute: verifiedAppRoute,
     stepByStepActions: [
       paymentDetail.paymentRequested
-        ? `1. Refuse the payment request: ${companyName} never charges applicants for interviews or onboarding.`
+        ? `1. Refuse the payment request: ${companyName} never charges applicants for interviews, tests, or onboarding fees.`
         : `1. Review the official job description directly on the employer's careers site.`,
-      vacancyDetail.matchedListingUrl
-        ? `2. Apply directly on the official careers page: ${vacancyDetail.matchedListingUrl}`
-        : `2. Visit ${companyName}'s authenticated homepage and locate the Careers section.`,
-      `3. Verify recruiter identity independently: Contact ${companyName}'s verified HR office or official campus recruiter team.`,
-      `4. Never share passwords, Aadhaar/Govt ID photos, or banking OTPs over messaging apps.`,
-      `5. Preserve this message for campus security or corporate anti-fraud reporting.`,
+      `2. Do not share passwords, OTPs, or banking credentials under any circumstances.`,
+      `3. Do not submit sensitive identity documents (Aadhaar, PAN, Passport) until employer and recruiter identity are independently verified.`,
+      isReservedDest
+        ? `4. Do not treat .example or unverified links as legitimate application portals. Locate the real company website independently in a clean browser window.`
+        : vacancyDetail.matchedListingUrl
+        ? `4. Apply directly on the official careers page: ${vacancyDetail.matchedListingUrl}`
+        : `4. Locate the official company website independently in a separate browser window. Do not click links provided in unsolicited messages.`,
+      `5. Contact ${companyName} using official contact information discovered independently (published switchboard or verified careers email).`,
+      `6. Request a verifiable job requisition ID and email confirmation sent exclusively from an authenticated company domain.`,
+      `7. Preserve the complete original communication as evidence and report to your campus placement cell.`,
     ],
     whatNotToDo: [
       "Do NOT send money via UPI, QR code, netbanking, or cryptocurrency.",
       "Do NOT click payment links or scan QR codes provided in the message.",
-      "Do NOT call the phone number provided inside the suspicious message to verify that message.",
+      "Do NOT share passwords, OTPs, or banking credentials.",
+      "Do NOT submit sensitive identity documents or government IDs over messaging apps.",
+      "Do NOT call phone numbers or message handles provided inside the suspicious communication to verify that same communication.",
       "Do NOT provide bank account details, OTPs, or passwords for 'stipend verification'.",
     ],
     independentVerificationSteps: [
       `Search for "${companyName} official careers portal" in a clean browser window.`,
-      `Look up ${companyName}'s published recruitment fraud notice: ${policyDetail.policyUrl || "Official website"}.`,
+      `Check official corporate registries (e.g. MCA in India, SEC/state registries) to confirm legal entity status.`,
+      `Look up ${companyName}'s published recruitment fraud notice: ${policyDetail.policyUrl || "Official corporate website"}.`,
       `Contact your university campus placement cell to report unsolicited recruiter messages.`,
     ],
   };
@@ -527,6 +569,7 @@ export async function evaluateOfferIntegrity(
       payment: paymentDetail,
     },
     claimsLedger,
+    recruitmentIndicators: extracted.recruitmentAnalysis.indicators,
     trustGapMapNodes,
     sourceExplorer,
     safeActionPlan,

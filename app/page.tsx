@@ -13,6 +13,7 @@ import { TrustGraphExplorer } from "@/components/TrustGraphExplorer";
 import { TransactionTruthCard } from "@/components/TransactionTruthCard";
 import { SafeActionPlannerCard } from "@/components/SafeActionPlannerCard";
 import { OfferIntegrityCard } from "@/components/OfferIntegrityCard";
+import { RecruitmentRiskIndicatorsCard } from "@/components/RecruitmentRiskIndicatorsCard";
 
 type AnalysisMode = "link" | "message" | "job" | "offer_integrity" | "report" | "integrations" | "graph" | "truth";
 
@@ -1139,7 +1140,9 @@ export default function Home() {
           <div className="status-bar" role="status" aria-live="polite">
             <span className={loading ? "status-dot blinking" : "status-dot"} />
             <span>{status}</span>
-            <span className="status-pill-end">{loading ? "STREAMING" : "VERIFIED"}</span>
+            <span className="status-pill-end">
+              {loading ? "STREAMING" : result ? (result.riskOutcome ? result.riskOutcome.toUpperCase() : "EVALUATED") : "READY"}
+            </span>
           </div>
 
           {/* Real-Time Streaming Logs */}
@@ -1393,6 +1396,17 @@ export default function Home() {
                     {intel.recruitmentFeeWarning.explanation} Legitimate corporate employers never demand registration fees,
                     caution deposits, or equipment charges from candidates.
                   </p>
+                </div>
+              )}
+
+              {/* Structured Recruitment Risk Indicators (When detected or evaluated) */}
+              {((intel?.recruitmentIndicators && intel.recruitmentIndicators.length > 0) || (result.offerIntegrity?.recruitmentIndicators && result.offerIntegrity.recruitmentIndicators.length > 0)) && (
+                <div style={{ marginBottom: "16px" }}>
+                  <RecruitmentRiskIndicatorsCard
+                    indicators={intel?.recruitmentIndicators || result.offerIntegrity?.recruitmentIndicators || []}
+                    claimedCompany={intel?.companyIdentity?.claimedOrganization || result.offerIntegrity?.input?.claimedCompany}
+                    claimedRole={intel?.jobVerification?.claimedRole || result.offerIntegrity?.input?.claimedRole}
+                  />
                 </div>
               )}
 
