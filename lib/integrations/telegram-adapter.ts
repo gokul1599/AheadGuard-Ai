@@ -142,6 +142,29 @@ export class TelegramAdapter extends BaseIntegrationAdapter {
     const extractedUrls = this.extractUrls(text);
     const isCommand = text.startsWith("/");
 
+    let effectiveCategory: import("./types").InputCategory = "message";
+    let cleanedText = text;
+
+    if (isCommand) {
+      const parts = text.split(/\s+/);
+      const cmd = parts[0].toLowerCase();
+      cleanedText = parts.slice(1).join(" ").trim();
+
+      if (cmd === "/checkoffer" || cmd === "/offer") {
+        effectiveCategory = "job_offer";
+      } else if (cmd === "/checkqr" || cmd === "/qr") {
+        effectiveCategory = "qr_code";
+      } else if (cmd === "/checkcompany" || cmd === "/company") {
+        effectiveCategory = "company_claim";
+      } else if (cmd === "/checklink" || cmd === "/link" || extractedUrls.length > 0) {
+        effectiveCategory = "url";
+      } else {
+        effectiveCategory = extractedUrls.length > 0 ? "url" : "message";
+      }
+    } else if (extractedUrls.length > 0) {
+      effectiveCategory = "url";
+    }
+
     return {
       eventId: `tg_${message.message_id || Date.now()}`,
       platform: "telegram",
@@ -149,13 +172,13 @@ export class TelegramAdapter extends BaseIntegrationAdapter {
       senderHandle: sender.username ? `@${sender.username}` : undefined,
       senderDisplayName: [sender.first_name, sender.last_name].filter(Boolean).join(" ") || undefined,
       senderIdentifier: String(sender.id || ""),
-      rawText: text,
+      rawText: cleanedText || text,
       extractedUrls,
       extractedEntities: {
         commands: isCommand ? [text.split(" ")[0].toLowerCase()] : [],
         phoneNumbers: text.match(/\+?[1-9]\d{1,14}/g) || [],
       },
-      inputCategory: extractedUrls.length > 0 ? "url" : isCommand ? "company_claim" : "message",
+      inputCategory: effectiveCategory,
       metadata: {
         chatType: chat.type,
         chatTitle: chat.title,

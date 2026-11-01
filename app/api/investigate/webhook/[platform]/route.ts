@@ -56,6 +56,11 @@ export async function POST(
   try {
     const jsonPayload = rawBody ? JSON.parse(rawBody) : {};
 
+    // Discord Endpoint Registration Challenge (PING -> PONG)
+    if (platform === "discord" && jsonPayload.type === 1) {
+      return NextResponse.json({ type: 1 });
+    }
+
     // Normalize event through the platform adapter
     const normalizedEvent = await adapter.normalizeEvent(jsonPayload);
 

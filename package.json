@@ -15,6 +15,7 @@
     "test:smoke:persistence": "node scripts/verify-persistence.mjs",
     "test:extension:e2e": "node scripts/verify-extension-e2e.mjs",
     "build:extension": "node build-extension.mjs",
+    "package:extension": "node scripts/package-extension.mjs",
     "build:all": "npm run build && npm run build:extension",
     "db:migrate": "node --env-file=.env.local scripts/migrate.mjs"
   },
