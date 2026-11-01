@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node build-extension.mjs && node scripts/package-extension.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",

@@ -106,6 +106,24 @@ export default function Home() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
 
+  // Chrome Extension Download & Mobile Menu state
+  const [downloadStarted, setDownloadStarted] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleDownloadExtension = () => {
+    setDownloadStarted(true);
+    const link = document.createElement("a");
+    link.href = "/aheadguard-ai-chrome-extension.zip";
+    link.download = "aheadguard-ai-chrome-extension.zip";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => {
+      setDownloadStarted(false);
+    }, 6000);
+  };
+
   // Evidence Ledger state (localStorage)
   const [history, setHistory] = useState<InvestigationReport[]>([]);
   const [isHistoryPaused, setIsHistoryPaused] = useState(false);
@@ -553,8 +571,107 @@ export default function Home() {
           <span className="engine-status-badge" role="status" aria-live="polite">
             <span className="status-dot" /> Evidence Engine Active
           </span>
+          <a href="/install-extension" className="topbar-guide-link">
+            Extension Guide
+          </a>
+          <button
+            type="button"
+            className="topbar-download-btn"
+            onClick={handleDownloadExtension}
+            aria-label="Download AheadGuard AI Chrome Extension"
+          >
+            <span className="btn-icon">⬇</span>
+            <span>Download Extension</span>
+          </button>
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            aria-label="Toggle mobile navigation menu"
+            aria-expanded={mobileMenuOpen}
+          >
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+            <span className="hamburger-line" />
+          </button>
         </div>
       </header>
+
+      {/* Floating Download Notification Banner */}
+      {downloadStarted && (
+        <aside className="download-toast-banner" role="status" aria-live="polite" aria-label="Download notification">
+          <div className="download-toast-content">
+            <span className="toast-icon">✓</span>
+            <div>
+              <strong>Downloading aheadguard-ai-chrome-extension.zip (v3.0.0)</strong>
+              <p>
+                Extract the ZIP file, open <code>chrome://extensions</code>, enable Developer Mode, and click Load unpacked.{" "}
+                <a href="/install-extension">View full guide →</a>
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="toast-close-btn"
+            onClick={() => setDownloadStarted(false)}
+            aria-label="Close notification"
+          >
+            ✕
+          </button>
+        </aside>
+      )}
+
+      {/* Mobile Navigation Drawer */}
+      {mobileMenuOpen && (
+        <div className="mobile-drawer-overlay" onClick={() => setMobileMenuOpen(false)}>
+          <div className="mobile-drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="mobile-drawer-header">
+              <span className="drawer-title">AheadGuard AI Navigation</span>
+              <button
+                type="button"
+                className="drawer-close-btn"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Close mobile menu"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="mobile-drawer-body">
+              <div className="mobile-drawer-status">
+                <span className="status-dot" /> Evidence Engine v3.0 Active
+              </div>
+              <button
+                type="button"
+                className="btn-download-primary mobile-cta-btn"
+                onClick={() => {
+                  handleDownloadExtension();
+                  setMobileMenuOpen(false);
+                }}
+              >
+                <span>⬇ Download Extension (ZIP)</span>
+              </button>
+              <a
+                href="/install-extension"
+                className="mobile-drawer-link"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                📖 Installation Guide & Tutorial →
+              </a>
+              <a
+                href="#top"
+                className="mobile-drawer-link"
+                onClick={() => setMobileMenuOpen(false)}
+              >
+                🛡️ Web Investigation Sandbox →
+              </a>
+              <div className="mobile-drawer-meta">
+                <span>Chrome Extension v3.0.0 · Manifest V3</span>
+                <span>27 KB Pre-compiled ZIP · Zero Tracking</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hero Section */}
       <section className="hero" id="top">

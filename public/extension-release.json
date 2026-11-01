@@ -1,0 +1,46 @@
+{
+  "name": "AheadGuard AI — Proactive Digital Safety Guardian",
+  "version": "3.0.0",
+  "manifestVersion": 3,
+  "releaseDate": "2026-11-01",
+  "fileName": "aheadguard-ai-chrome-extension.zip",
+  "downloadUrl": "/aheadguard-ai-chrome-extension.zip",
+  "versionedDownloadUrl": "/aheadguard-extension-v3.0.0.zip",
+  "sha256": "bb77385fa54b0a0c5cc49f05868adffe4738a6d792eeecb28a78c10ab12ba1fb",
+  "sizeBytes": 27509,
+  "sizeFormatted": "26.9 KB",
+  "files": [
+    "manifest.json",
+    "popup.html",
+    "popup.css",
+    "background.js",
+    "popup.js",
+    "content.js",
+    "icons/icon16.png",
+    "icons/icon48.png",
+    "icons/icon128.png"
+  ],
+  "compatibility": {
+    "target": "Chromium (Manifest V3)",
+    "supportedBrowsers": [
+      "Google Chrome",
+      "Microsoft Edge",
+      "Brave",
+      "Opera",
+      "Arc"
+    ],
+    "developerModeRequired": true,
+    "backendUrl": "https://aheadguard-ai.vercel.app",
+    "permissions": [
+      "activeTab",
+      "storage",
+      "webNavigation",
+      "contextMenus"
+    ],
+    "hostPermissions": [
+      "https://aheadguard-ai.vercel.app/*",
+      "http://localhost:3000/*",
+      "http://127.0.0.1:3000/*"
+    ]
+  }
+}
