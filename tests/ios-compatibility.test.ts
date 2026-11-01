@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { OPTIONS, POST, GET } from "../app/api/investigate/route";
-import { isAllowedOrigin, normalizeOrigin, getAllowedOrigins, resetRateLimitForTesting } from "../lib/api-security";
+import { OPTIONS, POST } from "../app/api/investigate/route";
+import { isAllowedOrigin, normalizeOrigin, resetRateLimitForTesting } from "../lib/api-security";
 import * as tinyfishModule from "../lib/tinyfish";
 import * as dbModule from "../lib/db";
 

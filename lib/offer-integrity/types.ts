@@ -27,7 +27,62 @@ export type OfferClaimStatus =
   | "CONTRADICTED"
   | "UNVERIFIED"
   | "CONFLICTING"
+  | "NOT_CHECKED"
+  | "CHECK_FAILED"
   | "INSUFFICIENT_EVIDENCE";
+
+export interface CanonicalOfferExtraction {
+  employer: {
+    name: string;
+    status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "NOT_CHECKED" | "CHECK_FAILED";
+    rawExtracted?: string;
+  };
+  job: {
+    title: string;
+    duration?: string;
+    workMode?: string;
+    referenceId?: string;
+    status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "NOT_CHECKED" | "CHECK_FAILED";
+  };
+  compensation: {
+    disclosedInMessage: boolean;
+    amount?: number;
+    amountString?: string;
+    currency?: string;
+    period?: "MONTHLY" | "ANNUAL" | "HOURLY" | "STIPEND" | "UNSPECIFIED";
+    status: "VERIFIED" | "UNVERIFIED" | "CONTRADICTED" | "NOT_CHECKED" | "NOT_DISCLOSED_IN_LISTING";
+  };
+  recruiter: {
+    name?: string;
+    designation?: string;
+    channel?: string;
+    handle?: string;
+    email?: string;
+    phone?: string;
+    affiliationStatus: "VERIFIED" | "SUPPORTED" | "UNVERIFIED" | "CONTRADICTED" | "INSUFFICIENT_EVIDENCE";
+  };
+  payment: {
+    requested: boolean;
+    amount?: number;
+    amountString?: string;
+    currency?: string;
+    method?: string;
+    upiId?: string;
+    mandatory: boolean;
+    refundableClaimed: boolean;
+    deadline?: string;
+    statedReason?: string;
+  };
+  selection: {
+    interviewRequired: boolean;
+    paymentRequiredForOfferLetter: boolean;
+    shortlistedClaim: boolean;
+  };
+  application: {
+    url?: string;
+    domainClassification?: string;
+  };
+}
 
 export interface OfferClaimItem {
   id: string;
@@ -51,7 +106,10 @@ export interface VacancyVerificationDetail {
   officialCareersUrl?: string;
   roleTitle: string;
   isVacancyFound: boolean;
-  vacancyStatus: "SUPPORTED" | "CONTRADICTED" | "UNVERIFIED" | "INSUFFICIENT_EVIDENCE";
+  vacancyStatus: "SUPPORTED" | "CONTRADICTED" | "UNVERIFIED" | "INSUFFICIENT_EVIDENCE" | "CHECK_FAILED";
+  jobReferenceId?: string;
+  eligibility?: string;
+  duration?: string;
   matchedListingUrl?: string;
   matchedListingTitle?: string;
   workArrangement?: string;
@@ -60,6 +118,7 @@ export interface VacancyVerificationDetail {
   sourceAuthority: string;
   explanation: string;
   limitations: string;
+  lookupStatus?: "SUCCESS" | "FAILED" | "NOT_PERFORMED";
 }
 
 export interface RecruitmentPolicyVerificationDetail {
@@ -130,6 +189,7 @@ export interface OfferIntegrityInput {
   paymentAmount?: string;
   paymentReason?: string;
   allowLiveCrawl?: boolean;
+  simulateCheckFailure?: boolean;
 }
 
 export interface OfferIntegrityReport {
@@ -155,6 +215,7 @@ export interface OfferIntegrityReport {
     payment: PaymentRequirementDetail;
   };
   claimsLedger: OfferClaimItem[];
+  canonicalExtraction?: CanonicalOfferExtraction;
   recruitmentIndicators?: import("../recruitment-intelligence").RecruitmentRiskIndicatorItem[];
   trustGapMapNodes: Array<{
     id: string;

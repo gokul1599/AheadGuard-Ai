@@ -1,4 +1,4 @@
-import { OfferIntegrityInput, OfferClaimItem } from "./types";
+import { OfferIntegrityInput, OfferClaimItem, CanonicalOfferExtraction } from "./types";
 import { BRAND_DOMAIN_REGISTRY } from "../policy";
 import {
   analyzeRecruitmentBehavior,
@@ -8,6 +8,8 @@ import {
 export interface ExtractedOfferData {
   companyName?: string;
   roleTitle?: string;
+  duration?: string;
+  workMode?: string;
   recruiterName?: string;
   recruiterDesignation?: string;
   senderEmail?: string;
@@ -22,6 +24,7 @@ export interface ExtractedOfferData {
   noInterviewClaim?: boolean;
   recruitmentAnalysis: RecruitmentBehaviorAnalysis;
   claims: OfferClaimItem[];
+  canonicalExtraction?: CanonicalOfferExtraction;
 }
 
 /**
@@ -66,37 +69,116 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
       if (companyName) break;
     }
 
-    // Heuristic company matching if still missing
+    // Pattern 1: Explicit Key-Value line: "Company: Nexora AI Labs Pvt. Ltd." or "Employer: Nexora AI Labs"
     if (!companyName) {
-      const compMatch = text.match(/(?:at|with|from|joining)\s+([A-Z][A-Za-z0-9&.\s]{2,25}?)(?:\s+(?:team|careers|department|technologies|corporation|inc|ltd|limited|solutions|\.|\,))/i);
+      const compKV = text.match(/(?:Company|Employer|Organization|Firm):\s*([^\n\r,]+)/i);
+      if (compKV && compKV[1]) {
+        companyName = compKV[1].trim();
+      }
+    }
+
+    // Pattern 2: "selected for ... at [Company Name]" or "internship at [Company Name]"
+    if (!companyName) {
+      const selectedAtMatch = text.match(/(?:selected\s+for|internship\s+at|role\s+at|position\s+at)\s+(?:the\s+)?(?:[A-Za-z0-9&.\s]{2,40}?\s+at\s+)?([A-Z][A-Za-z0-9&.\s]{2,40}?)(?:\.|\n|\r|!|,|$)/i);
+      if (selectedAtMatch && selectedAtMatch[1]) {
+        const candidate = selectedAtMatch[1].trim();
+        if (!/^(the|our|this|a|an)$/i.test(candidate)) {
+          companyName = candidate;
+        }
+      }
+    }
+
+    // Pattern 3: Heuristic company matching if still missing
+    if (!companyName) {
+      const compMatch = text.match(/(?:at|with|from|joining)\s+([A-Z][A-Za-z0-9&.\s]{2,35}?)(?:\s+(?:team|careers|department|technologies|corporation|inc|ltd|limited|solutions|pvt\.?\s*ltd\.?|labs|\.|\,))/i);
       if (compMatch && compMatch[1]) {
         companyName = compMatch[1].trim();
       }
+    }
+
+    // Pattern 4: Domain match from submitted URLs
+    if (!companyName && (input.vacancyUrl || input.applicationUrl)) {
+      const urlToParse = input.vacancyUrl || input.applicationUrl;
+      try {
+        const parsed = new URL(urlToParse!);
+        const host = parsed.hostname.toLowerCase();
+        if (host.includes("amazon.")) {
+          companyName = "Amazon";
+        } else if (host.includes("google.")) {
+          companyName = "Google";
+        } else if (host.includes("microsoft.")) {
+          companyName = "Microsoft";
+        } else if (host.includes("meta.")) {
+          companyName = "Meta";
+        }
+      } catch {}
     }
   }
 
   // 2. Role / Internship Title Identification
   let roleTitle = input.claimedRole?.trim();
   if (!roleTitle) {
-    const rolePatterns = [
-      /(?:internship\s+in\s+our\s+([A-Za-z\s]+?)\s+department)/i,
-      /(?:role\s+of\s+([A-Za-z\s]+?\s+intern(?:ship)?))/i,
-      /(?:position\s+of\s+([A-Za-z\s]+?\s+intern(?:ship)?))/i,
-      /([A-Z][A-Za-z\s]{2,30}?\s+Intern(?:ship)?)/,
-      /(?:shortlisted\s+for\s+(?:an?\s+)?([A-Za-z\s]+?\s+intern(?:ship)?))/i,
-      /(?:opportunity\s+as\s+(?:an?\s+)?([A-Za-z\s]+?\s+intern(?:ship)?))/i,
-    ];
-    for (const pat of rolePatterns) {
-      const match = text.match(pat);
-      if (match && match[1]) {
-        roleTitle = match[1].trim();
-        break;
+    // Pattern 1: Key-Value: "Position: AI & Machine Learning Intern" or "Role: SDE Intern"
+    const posKV = text.match(/(?:Position|Role|Job\s+Title|Title):\s*([^\n\r]+)/i);
+    if (posKV && posKV[1]) {
+      roleTitle = posKV[1].trim();
+    }
+
+    // Pattern 2: Subject line: "Subject: Congratulations! You Are Selected for the AI & Machine Learning Internship"
+    if (!roleTitle) {
+      const subjMatch = text.match(/Subject:.*?(?:Selected\s+for|for)\s+(?:the\s+)?([A-Za-z0-9&/\s-]{3,50}?\s+Intern(?:ship)?)/i);
+      if (subjMatch && subjMatch[1]) {
+        roleTitle = subjMatch[1].trim();
       }
     }
+
+    // Pattern 3: URL slug from vacancyUrl or applicationUrl
+    if (!roleTitle && (input.vacancyUrl || input.applicationUrl)) {
+      const rawUrl = input.vacancyUrl || input.applicationUrl;
+      const slugMatch = rawUrl?.match(/\/jobs\/\d+\/([a-z0-9-]+)/i);
+      if (slugMatch && slugMatch[1]) {
+        roleTitle = slugMatch[1]
+          .split("-")
+          .map((word) => {
+            if (/^(sde|ai|ml|hr|qa|ui|ux|api)$/i.test(word)) return word.toUpperCase();
+            if (/^(i|ii|iii|iv)$/i.test(word)) return word.toUpperCase();
+            return word.charAt(0).toUpperCase() + word.slice(1);
+          })
+          .join(" ");
+      }
+    }
+
+    // Pattern 4: Role patterns from message text
+    if (!roleTitle) {
+      const rolePatterns = [
+        /(?:selected\s+for\s+(?:the\s+)?([A-Za-z0-9&/\s-]{3,40}?\s+Intern(?:ship)?))/i,
+        /(?:internship\s+in\s+our\s+([A-Za-z\s]+?)\s+department)/i,
+        /(?:role\s+of\s+([A-Za-z\s]+?\s+intern(?:ship)?))/i,
+        /(?:position\s+of\s+([A-Za-z\s]+?\s+intern(?:ship)?))/i,
+        /([A-Z][A-Za-z0-9&/\s-]{2,30}?\s+Intern(?:ship)?)/,
+        /(?:shortlisted\s+for\s+(?:an?\s+)?([A-Za-z\s]+?\s+intern(?:ship)?))/i,
+        /(?:opportunity\s+as\s+(?:an?\s+)?([A-Za-z\s]+?\s+intern(?:ship)?))/i,
+      ];
+      for (const pat of rolePatterns) {
+        const match = text.match(pat);
+        if (match && match[1]) {
+          roleTitle = match[1].trim();
+          break;
+        }
+      }
+    }
+
     if (!roleTitle && /internship/i.test(text)) {
       roleTitle = "Internship Position";
     }
   }
+
+  // 2b. Duration and Work Arrangement Identification
+  const durationMatch = text.match(/(?:Duration|Period):\s*([^\n\r]+)/i) || text.match(/\b(\d+\s+(?:months?|weeks?))\b/i);
+  const duration = durationMatch ? durationMatch[1].trim() : undefined;
+
+  const workModeMatch = text.match(/(?:Work\s+Mode|Work\s+Arrangement|Location):\s*([^\n\r]+)/i) || text.match(/\b(100%\s*Remote|Remote|Hybrid|On-site)\b/i);
+  const workMode = workModeMatch ? workModeMatch[1].trim() : undefined;
 
   // 3. Recruiter Name & Designation
   let recruiterName = input.recruiterName?.trim();
@@ -111,13 +193,11 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     }
   }
 
-  let recruiterDesignation = input.recruiterDesignation?.trim();
+  let recruiterDesignation = input.recruiterDesignation?.trim() || recruitmentAnalysis.recruiter.designation;
   if (!recruiterDesignation) {
-    const desigMatch = text.match(/(Campus\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations|Recruitment\s+Coordinator)/i);
+    const desigMatch = text.match(/(Senior\s+HR\s+Recruiter|Campus\s+Recruiter|HR\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations|Recruitment\s+Coordinator)/i);
     if (desigMatch && desigMatch[1]) {
       recruiterDesignation = desigMatch[1].trim();
-    } else {
-      recruiterDesignation = recruitmentAnalysis.recruiter.designation;
     }
   }
 
@@ -304,9 +384,110 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     });
   }
 
+  // Claim 10: Refundable Fee Guarantee Claim (OBSERVED in message)
+  if (recruitmentAnalysis.fee.refundabilityClaimed) {
+    claims.push({
+      id: "claim-offer-refund",
+      category: "payment_requirement",
+      claimTitle: "Refundable Fee Guarantee Claim",
+      extractedValue: "Fee promised to be refunded with first month's stipend",
+      status: "OBSERVED",
+      observationTime: now,
+      explanation: "The offer claims upfront fees are refundable with future compensation. Refund promises are a hallmark tactic in advance-fee employment fraud.",
+      unresolvedQuestions: ["Has any regulatory or corporate body ever validated fee refunds from this sender?"],
+      suggestedAction: "DO NOT PAY. Fraudulent fee demands universally promise refunds that never materialize.",
+    });
+  }
+
+  // Claim 11: Payment Target / UPI ID (OBSERVED in message)
+  if (recruitmentAnalysis.fee.upiId) {
+    claims.push({
+      id: "claim-offer-upi-target",
+      category: "payment_requirement",
+      claimTitle: "Payment Recipient UPI Handle",
+      extractedValue: recruitmentAnalysis.fee.upiId,
+      status: "OBSERVED",
+      observationTime: now,
+      explanation: `Payment directed to individual/third-party UPI handle: ${recruitmentAnalysis.fee.upiId}.`,
+      unresolvedQuestions: ["Is this UPI VPA registered to a verified corporate bank account?"],
+      suggestedAction: "Never transfer recruitment fees to personal VPA handles.",
+    });
+  }
+
+  // Claim 12: Stated Monthly Stipend / Compensation (OBSERVED in message)
+  if (recruitmentAnalysis.process.stipendAmount) {
+    claims.push({
+      id: "claim-offer-compensation",
+      category: "vacancy_existence",
+      claimTitle: "Claimed Monthly Stipend",
+      extractedValue: recruitmentAnalysis.process.stipendAmount,
+      status: "OBSERVED",
+      observationTime: now,
+      explanation: `Stated stipend of ${recruitmentAnalysis.process.stipendAmount} claimed in submitted communication.`,
+      unresolvedQuestions: ["Is this compensation figure corroborated on official enterprise listings?"],
+      suggestedAction: "Cross-reference against authentic corporate salary benchmarks.",
+    });
+  }
+
+  // 9. Assemble Canonical Extraction Object
+  const canonicalExtraction: CanonicalOfferExtraction = {
+    employer: {
+      name: companyName || "Could not extract this field — manual review required",
+      status: companyName ? "UNVERIFIED" : "NOT_CHECKED",
+      rawExtracted: companyName,
+    },
+    job: {
+      title: roleTitle || "Could not extract this field — manual review required",
+      duration,
+      workMode,
+      referenceId: (input.vacancyUrl || applicationUrl)?.match(/\/jobs\/(\d+)/i)?.[1],
+      status: roleTitle ? "UNVERIFIED" : "NOT_CHECKED",
+    },
+    compensation: {
+      disclosedInMessage: Boolean(recruitmentAnalysis.process.stipendAmount),
+      amount: recruitmentAnalysis.process.stipendNumeric,
+      amountString: recruitmentAnalysis.process.stipendAmount,
+      currency: recruitmentAnalysis.process.stipendCurrency || "INR",
+      period: "MONTHLY",
+      status: recruitmentAnalysis.process.stipendAmount ? "UNVERIFIED" : "NOT_DISCLOSED_IN_LISTING",
+    },
+    recruiter: {
+      name: recruiterName,
+      designation: recruiterDesignation,
+      channel: recruitmentAnalysis.recruiter.channel,
+      handle: recruitmentAnalysis.recruiter.handleOrContact,
+      email: senderEmail,
+      phone: senderPhone,
+      affiliationStatus: "UNVERIFIED",
+    },
+    payment: {
+      requested: recruitmentAnalysis.fee.detected,
+      amount: recruitmentAnalysis.fee.numericAmount,
+      amountString: paymentAmount,
+      currency: paymentCurrency,
+      method: paymentChannel,
+      upiId: recruitmentAnalysis.fee.upiId,
+      mandatory: recruitmentAnalysis.fee.mandatory,
+      refundableClaimed: recruitmentAnalysis.fee.refundabilityClaimed,
+      deadline: urgencyText,
+      statedReason: paymentReason,
+    },
+    selection: {
+      interviewRequired: !noInterviewClaim,
+      paymentRequiredForOfferLetter: recruitmentAnalysis.process.offerLetterPaywall,
+      shortlistedClaim: isShortlistedClaim,
+    },
+    application: {
+      url: applicationUrl,
+      domainClassification: applicationUrl ? (applicationUrl.includes(".example") ? "SYNTHETIC_RESERVED" : "UNVERIFIED_THIRD_PARTY") : undefined,
+    },
+  };
+
   return {
     companyName,
     roleTitle,
+    duration,
+    workMode,
     recruiterName,
     recruiterDesignation,
     senderEmail,
@@ -321,5 +502,6 @@ export function extractOfferClaims(input: OfferIntegrityInput): ExtractedOfferDa
     noInterviewClaim,
     recruitmentAnalysis,
     claims,
+    canonicalExtraction,
   };
 }

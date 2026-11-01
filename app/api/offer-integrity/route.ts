@@ -29,6 +29,7 @@ const OfferInputSchema = z.object({
   applicationUrl: z.string().trim().max(2048).optional(),
   paymentAmount: z.string().trim().max(50).optional(),
   paymentReason: z.string().trim().max(500).optional(),
+  simulateCheckFailure: z.boolean().optional(),
 });
 
 function getCorsHeaders(request: Request): Record<string, string> {

@@ -18,6 +18,7 @@ export interface RecruitmentFeeDetection {
   refundabilityClaimed: boolean;
   deadline?: string;
   paymentMethod?: string;
+  upiId?: string;
   recipient?: string;
   reason?: string;
   quotedText: string;
@@ -44,6 +45,8 @@ export interface RecruitmentProcessAnomalies {
   employeeIdPaywall: boolean;
   stipendUnverifiedLure: boolean;
   stipendAmount?: string;
+  stipendNumeric?: number;
+  stipendCurrency?: string;
   quotedText?: string;
   evidenceSource: "SUBMITTED_MESSAGE";
   classification: "OBSERVED";
@@ -275,12 +278,21 @@ function extractRecruitmentFee(
   let feeCategory: RecruitmentFeeDetection["category"] = "REGISTRATION_AND_ONBOARDING";
 
   // Check refundability
-  if (/(?:refundable|refunded\s+after|returned\s+after|reimbursable)/i.test(text)) {
+  if (/(?:refundable|refunded\s+after|refunded\s+with|returned\s+after|reimbursable)/i.test(text)) {
     refundabilityClaimed = true;
   }
 
+  // Check UPI ID
+  const upiIdMatch =
+    text.match(/(?:UPI\s*(?:ID)?|VPA|pay\s+to|pay\s+via|UPI):\s*([a-zA-Z0-9_.-]+@[a-zA-Z0-9_]+)/i) ||
+    text.match(/\b([a-zA-Z0-9_.-]+@(upi|okhdfcbank|okaxis|oksbi|okicici|paytm|ybl|ibl|axl|barodampay|icici|hdfcbank))\b/i);
+  const upiId = upiIdMatch ? upiIdMatch[1].trim() : undefined;
+
   // Check payment method
-  if (/UPI|GPay|GooglePay|PhonePe|Paytm|BHIM/i.test(text)) {
+  const payMethodKV = text.match(/(?:Payment\s*Method|Pay\s*via|Payment\s*Mode):\s*([^\n\r]+)/i);
+  if (payMethodKV) {
+    paymentMethod = payMethodKV[1].trim();
+  } else if (upiId || /UPI|GPay|GooglePay|PhonePe|Paytm|BHIM/i.test(text)) {
     paymentMethod = "UPI";
   } else if (/QR\s*code/i.test(text)) {
     paymentMethod = "QR Code";
@@ -290,28 +302,53 @@ function extractRecruitmentFee(
     paymentMethod = "Cryptocurrency";
   }
 
-  // Pattern A: "paying a [refundable] registration and onboarding fee of ₹2,999"
-  // Handles: pay/paying/deposit/depositing/transfer/transferring
-  const feeRegex1 =
-    /(?:paying|pay|deposit|depositing|transfer|transferring|send|sending|submitting)\s+(?:a|an|the|any)?\s*(?:(?:mandatory|refundable|nominal|one-time|advance|initial)\s+)?([a-z\s/&,-]{2,40}?)\s*(?:fee|fees|charge|charges|deposit|deposits|amount)\s+(?:of\s+)?(₹|INR|Rs\.?|\$|USD|€|EUR|£|GBP)?\s*([0-9,]+(?:\.[0-9]{2})?)/i;
+  // Pattern 0: Structured Key-Value Line: "Amount: ₹999", "Fee: ₹999", "Amount: 999"
+  if (!amountStr) {
+    const feeRegexKV = /(?:Amount|Registration\s+Fee|Fee|Payment|Deposit|Charges?):\s*(₹|INR|Rs\.?|\$|USD|€|EUR|£|GBP)?\s*([0-9,]+(?:\.[0-9]{2})?)/i;
+    const matchKV = text.match(feeRegexKV);
+    if (matchKV) {
+      currency = normalizeCurrency(matchKV[1] || "INR");
+      amountStr = matchKV[2].replace(/,/g, "");
+      quotedText = matchKV[0].trim();
+    }
+  }
 
-  const match1 = text.match(feeRegex1);
-  if (match1) {
-    const rawCategory = match1[1].toLowerCase();
-    currency = normalizeCurrency(match1[2] || "INR");
-    amountStr = match1[3].replace(/,/g, "");
-    quotedText = match1[0].trim();
+  // Pattern A: "complete a [refundable] registration and onboarding payment of ₹999"
+  // Handles: complete/make/remit/paying/pay/deposit/depositing/transfer/transferring/send/submitting
+  if (!amountStr) {
+    const feeRegex1 =
+      /(?:complete|make|remit|paying|pay|deposit|depositing|transfer|transferring|send|sending|submitting)\s+(?:a|an|the|any)?\s*(?:(?:mandatory|refundable|nominal|one-time|advance|initial)\s+)?([a-z\s/&,-]{2,40}?)\s*(?:payment|fee|fees|charge|charges|deposit|deposits|amount)s?\s+(?:of\s+)?(₹|INR|Rs\.?|\$|USD|€|EUR|£|GBP)?\s*([0-9,]+(?:\.[0-9]{2})?)/i;
 
-    if (rawCategory.includes("registration") || rawCategory.includes("onboarding")) {
-      feeCategory = "REGISTRATION_AND_ONBOARDING";
-    } else if (rawCategory.includes("interview") || rawCategory.includes("slot")) {
-      feeCategory = "INTERVIEW_SLOT_RESERVATION";
-    } else if (rawCategory.includes("security") || rawCategory.includes("equipment") || rawCategory.includes("laptop")) {
-      feeCategory = "SECURITY_DEPOSIT";
-    } else if (rawCategory.includes("training") || rawCategory.includes("induction")) {
-      feeCategory = "TRAINING_AND_COURSE";
-    } else if (rawCategory.includes("document") || rawCategory.includes("verification")) {
-      feeCategory = "DOCUMENT_VERIFICATION";
+    const match1 = text.match(feeRegex1);
+    if (match1) {
+      const rawCategory = match1[1].toLowerCase();
+      currency = normalizeCurrency(match1[2] || "INR");
+      amountStr = match1[3].replace(/,/g, "");
+      quotedText = match1[0].trim();
+
+      if (rawCategory.includes("registration") || rawCategory.includes("onboarding")) {
+        feeCategory = "REGISTRATION_AND_ONBOARDING";
+      } else if (rawCategory.includes("interview") || rawCategory.includes("slot")) {
+        feeCategory = "INTERVIEW_SLOT_RESERVATION";
+      } else if (rawCategory.includes("security") || rawCategory.includes("equipment") || rawCategory.includes("laptop")) {
+        feeCategory = "SECURITY_DEPOSIT";
+      } else if (rawCategory.includes("training") || rawCategory.includes("induction")) {
+        feeCategory = "TRAINING_AND_COURSE";
+      } else if (rawCategory.includes("document") || rawCategory.includes("verification")) {
+        feeCategory = "DOCUMENT_VERIFICATION";
+      }
+    }
+  }
+
+  // Pattern A2: "The ₹999 amount will be refunded" or "₹999 amount will be refunded"
+  if (!amountStr) {
+    const feeRegexRefund = /(?:the\s+)?(₹|INR|Rs\.?|\$|USD|€|EUR|£|GBP)?\s*([0-9,]+(?:\.[0-9]{2})?)\s*(?:amount\s+)?(?:will\s+be|is)\s*(?:refunded|reimbursed|returned)/i;
+    const matchRefund = text.match(feeRegexRefund);
+    if (matchRefund) {
+      currency = normalizeCurrency(matchRefund[1] || "INR");
+      amountStr = matchRefund[2].replace(/,/g, "");
+      quotedText = matchRefund[0].trim();
+      refundabilityClaimed = true;
     }
   }
 
@@ -432,6 +469,7 @@ function extractRecruitmentFee(
     refundabilityClaimed,
     deadline,
     paymentMethod,
+    upiId,
     reason: params.paymentReason || "Registration and onboarding fee",
     quotedText,
     confidence: detected ? 1.0 : 0,
@@ -505,7 +543,7 @@ function extractProcessAnomalies(
     /(?:congratulations!\s*you\s+have\s+been\s+shortlisted|you\s+are\s+selected\s+for|direct\s+placement|guaranteed\s+internship|100%\s+selection)/i.test(text);
 
   const offerLetterPaywall =
-    /(?:after\s+payment\s+confirmation,\s*your\s+digital\s+offer\s+letter|offer\s+letter\s+will\s+be\s+generated\s+after\s+payment|pay\s+to\s+receive\s+offer\s+letter)/i.test(text);
+    /(?:only\s+candidates\s+who\s+complete\s+payment\s+will\s+receive\s+(?:their\s+)?offer\s+letter|after\s+payment\s+confirmation,\s*your\s+digital\s+offer\s+letter|offer\s+letter\s+will\s+be\s+generated\s+after\s+payment|pay\s+to\s+receive\s+offer\s+letter|offer\s+letter\s+generation\s+conditioned\s+on\s+payment|digital\s+offer\s+letter\s+generation)/i.test(text);
 
   const employeeIdPaywall =
     /(?:employee\s+id\s+will\s+be\s+generated|release\s+(?:your\s+)?employee\s+id|id\s+card\s+after\s+payment)/i.test(text);
@@ -513,10 +551,19 @@ function extractProcessAnomalies(
   // Stated compensation / stipend extraction
   let stipendUnverifiedLure = false;
   let stipendAmount: string | undefined;
-  const stipendMatch = text.match(/(?:stipend|salary|compensation)\s+of\s+(₹|INR|Rs\.?|\$|USD)\s*([0-9,]+(?:\s*per\s+month|\/mo)?)/i);
+  let stipendNumeric: number | undefined;
+  let stipendCurrency: string | undefined;
+
+  const stipendMatch =
+    text.match(/(?:Monthly\s+Stipend|Stipend|Salary|Compensation):\s*(₹|INR|Rs\.?|\$|USD)?\s*([0-9,]+(?:\s*(?:per\s+month|\/mo))?)/i) ||
+    text.match(/(?:stipend|salary|compensation)\s+(?:of\s+)?(₹|INR|Rs\.?|\$|USD)\s*([0-9,]+(?:\s*per\s+month|\/mo)?)/i);
+
   if (stipendMatch) {
     stipendUnverifiedLure = true;
-    stipendAmount = `${stipendMatch[1]} ${stipendMatch[2]}`.trim();
+    stipendCurrency = normalizeCurrency(stipendMatch[1] || "INR");
+    const rawVal = stipendMatch[2].replace(/,/g, "").trim();
+    stipendNumeric = parseFloat(rawVal);
+    stipendAmount = `${stipendMatch[1] || "₹"}${stipendMatch[2]}`.trim();
   }
 
   let quotedText: string | undefined;
@@ -532,6 +579,8 @@ function extractProcessAnomalies(
     employeeIdPaywall,
     stipendUnverifiedLure,
     stipendAmount,
+    stipendNumeric,
+    stipendCurrency,
     quotedText,
     evidenceSource: "SUBMITTED_MESSAGE",
     classification: "OBSERVED",
@@ -553,19 +602,45 @@ function extractRecruiterChannel(
 ): RecruiterIdentityAnalysis {
   let name = params.recruiterName?.trim();
   let designation = params.recruiterDesignation?.trim();
+
+  // If recruiter name not provided, extract from message blocks (avoiding matching newlines in name)
+  if (!name) {
+    const blockMatch =
+      text.match(/(?:Recruitment\s+Coordinator|Recruiter\s+Contact|Recruiter\s+Details|HR\s+Contact|Point\s+of\s+Contact):\s*\r?\n\s*([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/i) ||
+      text.match(/(?:Recruiter\s+Name|Recruiter|HR\s+Name|Contact\s+Person):\s*([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/i);
+    if (blockMatch && blockMatch[1]) {
+      name = blockMatch[1].trim();
+    }
+  }
+
+  // If designation not provided, check the line immediately following recruiter name
+  if (!designation && name) {
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const nextLineMatch = text.match(new RegExp(`${escapedName}\\s*\\r?\\n\\s*([^\\r\\n]+)`, "i"));
+    if (nextLineMatch && nextLineMatch[1]) {
+      const line = nextLineMatch[1].trim();
+      if (/recruiter|talent|hr|coordinator|manager|specialist|officer/i.test(line)) {
+        designation = line;
+      }
+    }
+  }
+
+  // Fallback designation regex
   if (!designation) {
-    const desigMatch = text.match(/(Campus\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations|Recruitment\s+Coordinator)/i);
+    const desigMatch = text.match(/(Senior\s+HR\s+Recruiter|Campus\s+Recruiter|HR\s+Recruiter|HR\s+Manager|Talent\s+Acquisition(?:\s+Specialist)?|Technical\s+Recruiter|Hiring\s+Manager|People\s+Operations|Recruitment\s+Coordinator)/i);
     if (desigMatch && desigMatch[1]) {
       designation = desigMatch[1].trim();
     }
   }
+
   let channel: RecruiterIdentityAnalysis["channel"] = "Other";
   let handleOrContact: string | undefined;
   let isPersonalMessaging = false;
   let emailDomain: string | undefined;
 
-  // 1. Check for Telegram handle: @username, t.me/username, or (Telegram)
+  // 1. Check for Telegram handle: Telegram: @username, @username (Telegram), t.me/username
   const tgMatch =
+    text.match(/(?:Telegram|TG):\s*@?([a-zA-Z0-9_]{3,32})/i) ||
     (params.recruiterName && params.recruiterName.match(/@([a-zA-Z0-9_]{3,32})/)) ||
     text.match(/@([a-zA-Z0-9_]{3,32})\s*(?:\(Telegram\)|\s+on\s+Telegram)/i) ||
     text.match(/t\.me\/([a-zA-Z0-9_]{3,32})/i) ||

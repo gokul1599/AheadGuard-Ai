@@ -388,6 +388,72 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
             />
           )}
 
+          {/* Canonical Extraction Summary Box */}
+          {report.canonicalExtraction && (
+            <div
+              style={{
+                padding: "16px 20px",
+                borderRadius: "8px",
+                background: "rgba(15, 23, 42, 0.7)",
+                border: "1px solid var(--border-subtle, #1e293b)",
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", borderBottom: "1px solid rgba(30, 41, 59, 0.5)", paddingBottom: "8px" }}>
+                <span style={{ fontSize: "12px", fontWeight: 700, color: "#38bdf8", letterSpacing: "0.08em" }}>
+                  📋 EXTRACTED OFFER CLAIMS (PRE-VERIFICATION BASELINE)
+                </span>
+                <span style={{ fontSize: "11px", color: "var(--text-secondary, #94a3b8)" }}>
+                  Extracted from submitted communication
+                </span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "12px", fontSize: "12px" }}>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Claimed Employer</span>
+                  <strong style={{ color: "#f8fafc" }}>{report.canonicalExtraction.employer.name}</strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Position / Requisition</span>
+                  <strong style={{ color: "#f8fafc" }}>
+                    {report.canonicalExtraction.job.title}
+                    {report.canonicalExtraction.job.duration ? ` • ${report.canonicalExtraction.job.duration}` : ""}
+                    {report.canonicalExtraction.job.workMode ? ` • ${report.canonicalExtraction.job.workMode}` : ""}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Compensation</span>
+                  <strong style={{ color: report.canonicalExtraction.compensation.disclosedInMessage ? "#10b981" : "#94a3b8" }}>
+                    {report.canonicalExtraction.compensation.disclosedInMessage
+                      ? `${report.canonicalExtraction.compensation.amountString || report.canonicalExtraction.compensation.amount} (${report.canonicalExtraction.compensation.period})`
+                      : "Not disclosed in message/listing"}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Recruiter Identity</span>
+                  <strong style={{ color: "#f8fafc" }}>
+                    {report.canonicalExtraction.recruiter.name || "Could not extract this field — manual review required"}
+                    {report.canonicalExtraction.recruiter.designation ? ` (${report.canonicalExtraction.recruiter.designation})` : ""}
+                    {report.canonicalExtraction.recruiter.handle ? ` via ${report.canonicalExtraction.recruiter.channel}: ${report.canonicalExtraction.recruiter.handle}` : ""}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Payment Demand</span>
+                  <strong style={{ color: report.canonicalExtraction.payment.requested ? "#ef4444" : "#10b981" }}>
+                    {report.canonicalExtraction.payment.requested
+                      ? `${report.canonicalExtraction.payment.currency || "INR"} ${report.canonicalExtraction.payment.amountString || report.canonicalExtraction.payment.amount}${report.canonicalExtraction.payment.upiId ? ` via UPI (${report.canonicalExtraction.payment.upiId})` : ""}${report.canonicalExtraction.payment.deadline ? ` [Deadline: ${report.canonicalExtraction.payment.deadline}]` : ""}`
+                      : "No fees requested in communication"}
+                  </strong>
+                </div>
+                <div>
+                  <span style={{ color: "#94a3b8", display: "block" }}>Selection Conditions</span>
+                  <strong style={{ color: "#f8fafc" }}>
+                    {report.canonicalExtraction.selection.interviewRequired ? "Interview required" : "No interview required"}
+                    {report.canonicalExtraction.selection.paymentRequiredForOfferLetter ? " • Offer letter paywalled" : ""}
+                  </strong>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Navigation Tabs for Details */}
           <div style={{ display: "flex", gap: "8px", borderBottom: "1px solid var(--border-subtle, #1e293b)", paddingBottom: "8px" }}>
             <button
@@ -492,7 +558,7 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
                 <div style={{ fontSize: "14px", fontWeight: 600, color: report.offerBreakdown.payment.conflictsWithPolicy ? "#ef4444" : "var(--text-primary, #f8fafc)", marginBottom: "4px" }}>
                   {report.offerBreakdown.payment.paymentRequested
                     ? `${report.offerBreakdown.payment.currency || "INR"} ${report.offerBreakdown.payment.amount} (${report.offerBreakdown.payment.statedReason})`
-                    : "Zero Fees Requested"}
+                    : "No Fees Detected in Message"}
                 </div>
                 <p style={{ fontSize: "12px", color: "var(--text-secondary, #94a3b8)", margin: "0 0 10px", lineHeight: 1.5 }}>
                   {report.offerBreakdown.payment.explanation}
@@ -511,7 +577,7 @@ export function OfferIntegrityCard({ onInvestigateComplete }: OfferIntegrityCard
                   {getStatusBadge(report.offerBreakdown.sender.affiliationStatus)}
                 </div>
                 <div style={{ fontSize: "14px", fontWeight: 600, color: "var(--text-primary, #f8fafc)", marginBottom: "4px" }}>
-                  {report.offerBreakdown.sender.claimedRecruiterName || "Unspecified Recruiter"}
+                  {report.offerBreakdown.sender.claimedRecruiterName || "Could not extract this field — manual review required"}
                   {report.offerBreakdown.sender.senderEmail && ` (${report.offerBreakdown.sender.senderEmail})`}
                 </div>
                 <p style={{ fontSize: "12px", color: "var(--text-secondary, #94a3b8)", margin: 0, lineHeight: 1.5 }}>
