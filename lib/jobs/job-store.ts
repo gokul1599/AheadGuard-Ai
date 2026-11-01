@@ -6,11 +6,14 @@ import crypto from "node:crypto";
  * Durable Job Store for AheadGuard AI 3.0 Headless Agent Execution.
  * Manages background investigation queues, idempotency deduplication,
  * safe concurrent lease locks, retries, and dead-letter classification.
+ *
+ * In Production: Strictly fails closed if PostgreSQL is unreachable.
+ * Never acknowledges durable acceptance on ephemeral process memory.
  */
 export class JobStore {
   private static instance: JobStore;
 
-  // In-memory fallback map for test isolation and unconfigured environments
+  // Development & Test-isolation in-memory map (strictly disabled in production)
   private inMemoryJobs = new Map<string, InvestigationJob>();
   private inMemoryIdempotency = new Map<string, string>(); // idempotencyKey -> jobId
   private tableInitialized = false;
@@ -25,7 +28,17 @@ export class JobStore {
   }
 
   /**
-   * Resets in-memory state (primarily for automated test isolation).
+   * Identifies whether the current execution environment requires strict durable database persistence.
+   */
+  public isProductionMode(): boolean {
+    if (process.env.VITEST || process.env.NODE_ENV === "test") {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Resets in-memory state (strictly for automated test isolation).
    */
   public resetForTesting(): void {
     this.inMemoryJobs.clear();
@@ -80,16 +93,24 @@ export class JobStore {
       );
 
       this.tableInitialized = true;
-    } catch {
-      // Fallback gracefully to in-memory mode if table creation cannot proceed
+    } catch (err) {
+      if (this.isProductionMode()) {
+        throw new Error(
+          `Critical Production Error: Failed to provision investigation_jobs schema in PostgreSQL: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
     }
   }
 
   /**
    * Enqueues a new investigation job with strict idempotency deduplication.
    * If a job with the same idempotency key already exists, returns the existing job.
+   * In Production: Fails closed if PostgreSQL persistence cannot be verified.
    */
   public async enqueueJob(params: EnqueueJobParams): Promise<{ job: InvestigationJob; isDuplicate: boolean }> {
+    // 1. Check for existing idempotent submission
     const existing = await this.getJobByIdempotencyKey(params.idempotencyKey);
     if (existing) {
       return { job: existing, isDuplicate: true };
@@ -115,14 +136,17 @@ export class JobStore {
       updatedAt: now,
     };
 
-    // Store in-memory always for speed and resilience
-    this.inMemoryJobs.set(jobId, newJob);
-    this.inMemoryIdempotency.set(params.idempotencyKey, jobId);
+    // 2. Production Strict Database Path
+    if (this.isProductionMode() || isDatabaseConfigured()) {
+      if (!isDatabaseConfigured()) {
+        throw new Error(
+          "Durable persistence unavailable: DATABASE_URL is not configured. Production investigations require persistent database storage."
+        );
+      }
 
-    if (isDatabaseConfigured()) {
+      await this.ensureTable();
+      const sql = getDb();
       try {
-        await this.ensureTable();
-        const sql = getDb();
         await withTimeout(
           sql`
             INSERT INTO investigation_jobs (
@@ -135,18 +159,33 @@ export class JobStore {
             )
             ON CONFLICT (idempotency_key) DO NOTHING;
           `,
-          3000
+          3500
         );
-      } catch {
-        // In-memory record preserved
+
+        // Keep local cache in sync
+        this.inMemoryJobs.set(jobId, newJob);
+        this.inMemoryIdempotency.set(params.idempotencyKey, jobId);
+        return { job: newJob, isDuplicate: false };
+      } catch (err) {
+        if (this.isProductionMode()) {
+          throw new Error(
+            `Durable persistence rejected: Failed to commit investigation job to PostgreSQL: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
       }
     }
 
+    // 3. Isolated Test/Development Fallback (only reached when not in production mode)
+    this.inMemoryJobs.set(jobId, newJob);
+    this.inMemoryIdempotency.set(params.idempotencyKey, jobId);
     return { job: newJob, isDuplicate: false };
   }
 
   /**
    * Atomically acquires a lease on the next available queued or timed-out job.
+   * Utilizes PostgreSQL 'FOR UPDATE SKIP LOCKED' in database environments to prevent race conditions.
    */
   public async acquireJobLease(leaseDurationMs: number = 30000): Promise<InvestigationJob | null> {
     const nowMs = Date.now();
@@ -154,8 +193,15 @@ export class JobStore {
     const leaseExpiresAt = new Date(nowMs + leaseDurationMs).toISOString();
     const leaseToken = crypto.randomUUID();
 
-    // 1. Try database lease if configured
-    if (isDatabaseConfigured()) {
+    // 1. Database Atomic Lease Acquisition
+    if (this.isProductionMode() || isDatabaseConfigured()) {
+      if (!isDatabaseConfigured()) {
+        if (this.isProductionMode()) {
+          throw new Error("Cannot acquire lease: DATABASE_URL not configured in production mode.");
+        }
+        return null;
+      }
+
       try {
         await this.ensureTable();
         const sql = getDb();
@@ -170,7 +216,7 @@ export class JobStore {
               updated_at = ${nowIso}
             WHERE id = (
               SELECT id FROM investigation_jobs
-              WHERE status = 'QUEUED'
+              WHERE status IN ('QUEUED', 'RETRY_WAIT')
                  OR (status = 'PROCESSING' AND lease_expires_at < ${nowIso})
               ORDER BY created_at ASC
               LIMIT 1
@@ -203,15 +249,20 @@ export class JobStore {
           this.inMemoryJobs.set(dbJob.id, dbJob);
           return dbJob;
         }
-      } catch {
-        // Fall back to in-memory check
+        return null;
+      } catch (err) {
+        if (this.isProductionMode()) {
+          throw new Error(
+            `Atomic lease acquisition failed in PostgreSQL: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
       }
     }
 
-    // 2. In-memory queue lease acquisition
+    // 2. Isolated Test-Runner Fallback
     for (const job of this.inMemoryJobs.values()) {
       const isExpired = job.status === "PROCESSING" && job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() < nowMs;
-      if (job.status === "QUEUED" || isExpired) {
+      if (job.status === "QUEUED" || job.status === "RETRY_WAIT" || isExpired) {
         job.status = "PROCESSING";
         job.leaseToken = leaseToken;
         job.leaseExpiresAt = leaseExpiresAt;
@@ -242,25 +293,21 @@ export class JobStore {
       memJob.updatedAt = nowIso;
     }
 
-    if (isDatabaseConfigured()) {
-      try {
-        const sql = getDb();
-        await withTimeout(
-          sql`
-            UPDATE investigation_jobs
-            SET 
-              status = 'COMPLETED',
-              result = ${JSON.stringify(result)},
-              lease_token = NULL,
-              lease_expires_at = NULL,
-              updated_at = ${nowIso}
-            WHERE id = ${jobId} AND (lease_token = ${leaseToken} OR lease_token IS NULL);
-          `,
-          3000
-        );
-      } catch {
-        // memJob updated
-      }
+    if (this.isProductionMode() || isDatabaseConfigured()) {
+      const sql = getDb();
+      await withTimeout(
+        sql`
+          UPDATE investigation_jobs
+          SET 
+            status = 'COMPLETED',
+            result = ${JSON.stringify(result)},
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            updated_at = ${nowIso}
+          WHERE id = ${jobId} AND (lease_token = ${leaseToken} OR lease_token IS NULL);
+        `,
+        3000
+      );
     }
 
     return true;
@@ -268,6 +315,7 @@ export class JobStore {
 
   /**
    * Records a job failure. If attempts exceed maxAttempts, marks DEAD_LETTER.
+   * Otherwise transitions to RETRY_WAIT.
    */
   public async failJob(
     jobId: string,
@@ -280,32 +328,28 @@ export class JobStore {
 
     if (memJob) {
       isDeadLetter = memJob.attempts >= memJob.maxAttempts;
-      memJob.status = isDeadLetter ? "DEAD_LETTER" : "QUEUED";
+      memJob.status = isDeadLetter ? "DEAD_LETTER" : "RETRY_WAIT";
       memJob.errorMessage = errorMessage;
       memJob.leaseToken = null;
       memJob.leaseExpiresAt = null;
       memJob.updatedAt = nowIso;
     }
 
-    if (isDatabaseConfigured()) {
-      try {
-        const sql = getDb();
-        await withTimeout(
-          sql`
-            UPDATE investigation_jobs
-            SET 
-              status = CASE WHEN attempts >= max_attempts THEN 'DEAD_LETTER' ELSE 'QUEUED' END,
-              error_message = ${errorMessage},
-              lease_token = NULL,
-              lease_expires_at = NULL,
-              updated_at = ${nowIso}
-            WHERE id = ${jobId} AND (lease_token = ${leaseToken} OR lease_token IS NULL);
-          `,
-          3000
-        );
-      } catch {
-        // memJob updated
-      }
+    if (this.isProductionMode() || isDatabaseConfigured()) {
+      const sql = getDb();
+      await withTimeout(
+        sql`
+          UPDATE investigation_jobs
+          SET 
+            status = CASE WHEN attempts >= max_attempts THEN 'DEAD_LETTER' ELSE 'RETRY_WAIT' END,
+            error_message = ${errorMessage},
+            lease_token = NULL,
+            lease_expires_at = NULL,
+            updated_at = ${nowIso}
+          WHERE id = ${jobId} AND (lease_token = ${leaseToken} OR lease_token IS NULL);
+        `,
+        3000
+      );
     }
 
     return isDeadLetter;
@@ -315,10 +359,7 @@ export class JobStore {
    * Retrieves a job by ID.
    */
   public async getJob(jobId: string): Promise<InvestigationJob | null> {
-    const memJob = this.inMemoryJobs.get(jobId);
-    if (memJob) return { ...memJob };
-
-    if (isDatabaseConfigured()) {
+    if (this.isProductionMode() || isDatabaseConfigured()) {
       try {
         const sql = getDb();
         const rows = (await withTimeout(
@@ -346,24 +387,22 @@ export class JobStore {
             updatedAt: String(r.updated_at),
           };
         }
-      } catch {
-        return null;
+      } catch (err) {
+        if (this.isProductionMode()) {
+          throw new Error(`Failed to retrieve job from PostgreSQL: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
 
-    return null;
+    const memJob = this.inMemoryJobs.get(jobId);
+    return memJob ? { ...memJob } : null;
   }
 
   /**
    * Retrieves a job by its idempotency key.
    */
   public async getJobByIdempotencyKey(key: string): Promise<InvestigationJob | null> {
-    const jobId = this.inMemoryIdempotency.get(key);
-    if (jobId) {
-      return this.getJob(jobId);
-    }
-
-    if (isDatabaseConfigured()) {
+    if (this.isProductionMode() || isDatabaseConfigured()) {
       try {
         const sql = getDb();
         const rows = (await withTimeout(
@@ -394,11 +433,14 @@ export class JobStore {
           this.inMemoryIdempotency.set(key, j.id);
           return j;
         }
-      } catch {
-        return null;
+      } catch (err) {
+        if (this.isProductionMode()) {
+          throw new Error(`Failed to query idempotency in PostgreSQL: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
     }
 
-    return null;
+    const jobId = this.inMemoryIdempotency.get(key);
+    return jobId ? this.getJob(jobId) : null;
   }
 }

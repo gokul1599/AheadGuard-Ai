@@ -2,7 +2,15 @@ import { PlatformType, InputCategory } from "@/lib/integrations/types";
 import { InvestigationReport, RiskOutcome } from "@/lib/types";
 import { OfferIntegrityReport } from "@/lib/offer-integrity/types";
 
-export type JobStatus = "QUEUED" | "PROCESSING" | "COMPLETED" | "FAILED" | "DEAD_LETTER";
+export type JobStatus = 
+  | "RECEIVED"
+  | "QUEUED"
+  | "PROCESSING"
+  | "COMPLETED"
+  | "RETRY_WAIT"
+  | "DEAD_LETTER"
+  | "FAILED"
+  | "CANCELLED";
 
 export interface InvestigationJobPayload {
   inputCategory: InputCategory;

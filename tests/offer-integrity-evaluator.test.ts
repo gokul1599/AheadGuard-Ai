@@ -80,4 +80,31 @@ describe("Offer Integrity Evaluator & Flagship Scenario", () => {
     expect(report.riskOutcome).toBe("Suspicious");
     expect(report.offerBreakdown.payment.cautionNotice).toContain("Never pay interview reservation fees");
   });
+
+  it("Scenario B: Unverified vacancy without payment request returns Unknown (never Low observed risk)", async () => {
+    const report = await evaluateOfferIntegrity({
+      offerMessage: "Congratulations! You are invited to interview for Frontend Developer at UnregisteredStartup999.",
+      claimedCompany: "UnregisteredStartup999",
+      claimedRole: "Frontend Developer",
+    });
+
+    expect(report.offerBreakdown.vacancy.isVacancyFound).toBe(false);
+    expect(report.offerBreakdown.vacancy.vacancyStatus).toBe("UNVERIFIED");
+    expect(report.riskOutcome).toBe("Unknown");
+    expect(report.overallAssessment.verdictTitle).toContain("Unverified Vacancy");
+  });
+
+  it("Scenario D: Genuine company but unverified sender with unsolicited selection returns Suspicious", async () => {
+    const report = await evaluateOfferIntegrity({
+      offerMessage: "Congratulations! You have been shortlisted for an Internship at Google without applying. Please send your resume to recruiter99@gmail.com.",
+      claimedCompany: "Google",
+      claimedRole: "Software Engineer Intern",
+      senderEmail: "recruiter99@gmail.com",
+    });
+
+    expect(report.offerBreakdown.vacancy.isVacancyFound).toBe(true);
+    expect(report.offerBreakdown.sender.affiliationStatus).toBe("UNVERIFIED");
+    expect(report.riskOutcome).toBe("Suspicious");
+    expect(report.overallAssessment.verdictTitle).toContain("Unverified Contact");
+  });
 });

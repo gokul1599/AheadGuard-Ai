@@ -67,7 +67,9 @@ export async function evaluateOfferIntegrity(
   let vacancyDetail: VacancyVerificationDetail;
   if (officialCareersUrl) {
     const encodedRole = encodeURIComponent(roleTitle.replace(/Department|Position/gi, "").trim());
-    const matchedUrl = `${officialCareersUrl}${officialCareersUrl.includes("?") ? "&" : "/jobs?q="}${encodedRole}`;
+    const cleanCareersUrl = officialCareersUrl.replace(/\/+$/, "");
+    const rawMatchedUrl = `${cleanCareersUrl}${cleanCareersUrl.includes("?") ? "&q=" : "/jobs?q="}${encodedRole}`;
+    const matchedUrl = rawMatchedUrl.replace(/([^:]\/)\/+/g, "$1");
 
     vacancyDetail = {
       companyName,
@@ -344,14 +346,14 @@ export async function evaluateOfferIntegrity(
 
   // 7. Deterministic Risk Assessment under the 4-Tier Policy
   // Crucial rule: "THE INTERNSHIP CAN BE REAL WHILE THE PAYMENT REQUEST IS FALSE."
-  let riskOutcome: RiskOutcome = "Low observed risk";
+  let riskOutcome: RiskOutcome = "Unknown";
   let threatLikelihood: ThreatLikelihood = "Low";
   let consequenceImpact: ConsequenceImpact = "Low";
-  let verdictTitle = "Offer Appears Consistent With Verified Corporate Requisitions";
-  let verdictSummary = "The vacancy and sender details match official records with no payment demands observed.";
-  let strongestEvidence = "Active vacancy listed on employer's official careers portal.";
-  let mostConsequentialFinding = "Zero payment demands or unverified credentials observed.";
-  let keyRecommendation = "Proceed with normal application procedures through official portals.";
+  let verdictTitle = "Offer Evaluation Inconclusive";
+  let verdictSummary = "Available public evidence is insufficient to verify the authenticity of this offer.";
+  let strongestEvidence = "Independent verification with employer required.";
+  let mostConsequentialFinding = "Unverified offer details.";
+  let keyRecommendation = "Verify the offer directly through the employer's official careers directory.";
 
   if (paymentDetail.paymentRequested) {
     if (paymentDetail.conflictsWithPolicy) {
@@ -373,15 +375,47 @@ export async function evaluateOfferIntegrity(
       mostConsequentialFinding = "Unverified upfront payment requested from applicant.";
       keyRecommendation = `Do not pay any fee. Contact the employer directly through their official switchboard.`;
     }
-  } else if (senderDetail.affiliationStatus === "UNVERIFIED" && extracted.isShortlistedClaim) {
-    riskOutcome = "Suspicious";
-    threatLikelihood = "Moderate";
+  } else if (!vacancyDetail.isVacancyFound || vacancyDetail.vacancyStatus === "UNVERIFIED") {
+    // Scenario B: No matching vacancy found on official employer directories
+    riskOutcome = "Unknown";
+    threatLikelihood = "Uncertain";
     consequenceImpact = "Moderate";
-    verdictTitle = "Unsolicited Shortlisting From Unverified Contact";
-    verdictSummary = `The sender claims to represent ${companyName} but lacks corporate verification. Be cautious before disclosing sensitive identity documents.`;
-    strongestEvidence = "Communication originates from an unverified personal or third-party address.";
-    mostConsequentialFinding = "Unsolicited shortlisting without verifiable application history.";
-    keyRecommendation = "Verify sender authenticity before sending resumes or identification documents.";
+    verdictTitle = "Unverified Vacancy: Independent Research Required";
+    verdictSummary = `The claimed employer or vacancy for "${companyName}" could not be correlated with active listings on official careers directories.`;
+    strongestEvidence = "No active requisition found on official corporate careers registries.";
+    mostConsequentialFinding = "Vacancy claims cannot be corroborated.";
+    keyRecommendation = `Verify whether this position exists directly on ${companyName}'s official website.`;
+  } else if (senderDetail.affiliationStatus === "UNVERIFIED") {
+    // Scenario D: Genuine vacancy exists, but sender is unverified free webmail or third party
+    if (extracted.isShortlistedClaim || extracted.urgencyText) {
+      riskOutcome = "Suspicious";
+      threatLikelihood = "Moderate";
+      consequenceImpact = "Moderate";
+      verdictTitle = "Unsolicited Selection from Unverified Contact";
+      verdictSummary = `The sender claims to represent ${companyName} but lacks corporate verification. Be cautious before disclosing sensitive identity documents.`;
+      strongestEvidence = "Communication originates from an unverified personal or third-party address.";
+      mostConsequentialFinding = "Unsolicited shortlisting without verifiable application history.";
+      keyRecommendation = "Verify sender authenticity before sending resumes or identification documents.";
+    } else {
+      riskOutcome = "Unknown";
+      threatLikelihood = "Uncertain";
+      consequenceImpact = "Moderate";
+      verdictTitle = "Recruiter Corporate Affiliation Inconclusive";
+      verdictSummary = `An active listing exists at ${companyName}, but the sender's corporate email domain cannot be confirmed.`;
+      strongestEvidence = "Sender email domain could not be verified against corporate infrastructure.";
+      mostConsequentialFinding = "Unverified sender domain.";
+      keyRecommendation = `Contact ${companyName}'s verified HR department to confirm the recruiter.`;
+    }
+  } else {
+    // Both vacancy is verified AND sender domain is supported AND no payment demanded
+    riskOutcome = "Low observed risk";
+    threatLikelihood = "Low";
+    consequenceImpact = "Low";
+    verdictTitle = "Offer Consistent With Verified Corporate Directory";
+    verdictSummary = `The vacancy and recruiter domain match official ${companyName} records with no payment demands observed.`;
+    strongestEvidence = "Active vacancy listed on employer's official careers portal.";
+    mostConsequentialFinding = "Zero payment demands or unverified credentials observed.";
+    keyRecommendation = "Proceed with normal application procedures through official portals.";
   }
 
   // Core Brand Statement & Distinction

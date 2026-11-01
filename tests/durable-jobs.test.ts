@@ -123,7 +123,7 @@ describe("AheadGuard AI 3.0 — Headless Durable Execution Engine", () => {
       expect(isDead1).toBe(false);
 
       const jobAfter1 = await store.getJob(job.id);
-      expect(jobAfter1?.status).toBe("QUEUED");
+      expect(jobAfter1?.status).toBe("RETRY_WAIT");
 
       // Attempt 2 (reaches maxAttempts = 2)
       const lease2 = await store.acquireJobLease();
@@ -134,6 +134,49 @@ describe("AheadGuard AI 3.0 — Headless Durable Execution Engine", () => {
       const jobAfter2 = await store.getJob(job.id);
       expect(jobAfter2?.status).toBe("DEAD_LETTER");
       expect(jobAfter2?.errorMessage).toBe("Second timeout");
+    });
+
+    it("recovers an expired lease when worker crashes or times out", async () => {
+      const { job } = await store.enqueueJob({
+        idempotencyKey: "key_expired_lease_recovery",
+        platform: "telegram",
+        senderId: "user_crash",
+        sourceAccountId: "chat_crash",
+        payload: { inputCategory: "message", rawInput: "recover me" },
+      });
+
+      // Lease for 1ms
+      const lease1 = await store.acquireJobLease(1);
+      expect(lease1?.id).toBe(job.id);
+      expect(lease1?.status).toBe("PROCESSING");
+
+      // Wait 10ms for lease to expire
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Worker 2 attempts lease acquisition and recovers the abandoned job
+      const lease2 = await store.acquireJobLease(10000);
+      expect(lease2).not.toBeNull();
+      expect(lease2?.id).toBe(job.id);
+      expect(lease2?.attempts).toBe(2);
+      expect(lease2?.leaseToken).not.toBe(lease1?.leaseToken);
+    });
+
+    it("prevents concurrent workers from acquiring the same active lease", async () => {
+      await store.enqueueJob({
+        idempotencyKey: "key_concurrency_race",
+        platform: "telegram",
+        senderId: "user_race",
+        sourceAccountId: "chat_race",
+        payload: { inputCategory: "message", rawInput: "race condition test" },
+      });
+
+      const [worker1Acquired, worker2Acquired] = await Promise.all([
+        store.acquireJobLease(10000),
+        store.acquireJobLease(10000),
+      ]);
+
+      const acquiredJobs = [worker1Acquired, worker2Acquired].filter(Boolean);
+      expect(acquiredJobs.length).toBe(1);
     });
   });
 
