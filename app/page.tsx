@@ -8,8 +8,12 @@ import { extractUrlsFromText } from "@/lib/message-intelligence";
 import { DEMO_SCENARIOS, getDemoScenario, isDemoReport } from "@/lib/demo-data";
 import { TrustGapMap } from "@/components/TrustGapMap";
 import { EvidenceCoverageCard } from "@/components/EvidenceCoverageCard";
+import { IntegrationsHub } from "@/components/IntegrationsHub";
+import { TrustGraphExplorer } from "@/components/TrustGraphExplorer";
+import { TransactionTruthCard } from "@/components/TransactionTruthCard";
+import { SafeActionPlannerCard } from "@/components/SafeActionPlannerCard";
 
-type AnalysisMode = "link" | "message" | "job" | "report";
+type AnalysisMode = "link" | "message" | "job" | "report" | "integrations" | "graph" | "truth";
 
 const LINK_EXAMPLES = [
   { label: "Scaler Official", value: "https://www.scaler.com" },
@@ -651,6 +655,33 @@ export default function Home() {
               <Icon name="braces" />
               <span>Review Report</span>
             </button>
+            <button
+              className={`mode-tab-btn ${mode === "integrations" ? "active" : ""}`}
+              onClick={() => setMode("integrations")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="network" />
+              <span>Platform Integrations</span>
+            </button>
+            <button
+              className={`mode-tab-btn ${mode === "graph" ? "active" : ""}`}
+              onClick={() => setMode("graph")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="git-fork" />
+              <span>TrustGraph</span>
+            </button>
+            <button
+              className={`mode-tab-btn ${mode === "truth" ? "active" : ""}`}
+              onClick={() => setMode("truth")}
+              disabled={loading}
+              type="button"
+            >
+              <Icon name="badge-dollar-sign" />
+              <span>Transaction Truth</span>
+            </button>
           </nav>
 
           {/* MODE 1: Check a Link */}
@@ -966,34 +997,54 @@ export default function Home() {
             </div>
           )}
 
-          {/* Action button */}
-          <button
-            className="btn-primary"
-            style={{ marginTop: "16px" }}
-            onClick={() => runInvestigation()}
-            disabled={
-              loading ||
-              (mode === "link" && linkInput.trim().length < 4) ||
-              (mode === "message" && messageInput.trim().length < 5) ||
-              (mode === "job" && !jobOrg.trim() && !jobUrl.trim() && !jobOfferText.trim()) ||
-              (mode === "report" && reportJsonInput.trim().length < 10)
-            }
-            type="button"
-          >
-            {loading ? <Spinner /> : <Icon name="scan-search" />}
-            <span>
-              {loading
-                ? "Analyzing & Investigating…"
-                : mode === "report"
-                ? "Load & Render Report"
-                : mode === "job"
-                ? "Verify Job Offer & Claims"
-                : mode === "message"
-                ? "Analyze Message & Links"
-                : "Investigate Destination"}
-            </span>
-            <Icon name="arrow-up-right" />
-          </button>
+          {mode === "integrations" && (
+            <div className="mode-form-container" style={{ marginTop: "16px" }}>
+              <IntegrationsHub />
+            </div>
+          )}
+
+          {mode === "graph" && (
+            <div className="mode-form-container" style={{ marginTop: "16px" }}>
+              <TrustGraphExplorer />
+            </div>
+          )}
+
+          {mode === "truth" && (
+            <div className="mode-form-container" style={{ marginTop: "16px" }}>
+              <TransactionTruthCard />
+            </div>
+          )}
+
+          {/* Action button (for investigation modes) */}
+          {(mode === "link" || mode === "message" || mode === "job" || mode === "report") && (
+            <button
+              className="btn-primary"
+              style={{ marginTop: "16px" }}
+              onClick={() => runInvestigation()}
+              disabled={
+                loading ||
+                (mode === "link" && linkInput.trim().length < 4) ||
+                (mode === "message" && messageInput.trim().length < 5) ||
+                (mode === "job" && !jobOrg.trim() && !jobUrl.trim() && !jobOfferText.trim()) ||
+                (mode === "report" && reportJsonInput.trim().length < 10)
+              }
+              type="button"
+            >
+              {loading ? <Spinner /> : <Icon name="scan-search" />}
+              <span>
+                {loading
+                  ? "Analyzing & Investigating…"
+                  : mode === "report"
+                  ? "Load & Render Report"
+                  : mode === "job"
+                  ? "Verify Job Offer & Claims"
+                  : mode === "message"
+                  ? "Analyze Message & Links"
+                  : "Investigate Destination"}
+              </span>
+              <Icon name="arrow-up-right" />
+            </button>
+          )}
 
           <div className="boundary-notice">
             <Icon name="lock" />
@@ -1237,6 +1288,9 @@ export default function Home() {
 
               {/* Evidence Coverage & Integrity Card */}
               <EvidenceCoverageCard report={result} />
+
+              {/* Comprehensive Before-You-Act Protocol Planner */}
+              <SafeActionPlannerCard report={result} />
 
               {/* Action Preview & Safe Action Planner */}
               <div className="action-preview-card">

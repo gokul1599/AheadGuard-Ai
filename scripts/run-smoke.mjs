@@ -14,6 +14,7 @@
 
 import { spawn } from "node:child_process";
 import { resolve } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
 
 const args = process.argv.slice(2);
 const isPersistence = args.includes("--persistence");
@@ -37,6 +38,21 @@ if (isPersistence) {
   const env = {
     ...process.env,
   };
+
+  const envLocalPath = resolve(process.cwd(), ".env.local");
+  if (existsSync(envLocalPath)) {
+    const content = readFileSync(envLocalPath, "utf-8");
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed && !trimmed.startsWith("#") && trimmed.includes("=")) {
+        const [key, ...rest] = trimmed.split("=");
+        const val = rest.join("=").trim().replace(/^["']|["']$/g, "");
+        if (!env[key.trim()]) {
+          env[key.trim()] = val;
+        }
+      }
+    }
+  }
 
   if (isLive) {
     env.RUN_LIVE_SMOKE_TEST = "true";

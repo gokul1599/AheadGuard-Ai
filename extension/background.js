@@ -842,6 +842,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   })();
   return true;
 });
+chrome.runtime.onInstalled.addListener(() => {
+  try {
+    chrome.contextMenus.create({
+      id: "aheadguard_check_selection",
+      title: "AheadGuard: Investigate Selected Text",
+      contexts: ["selection"]
+    });
+    chrome.contextMenus.create({
+      id: "aheadguard_check_link",
+      title: "AheadGuard: Investigate Link Destination",
+      contexts: ["link"]
+    });
+  } catch {
+  }
+});
+chrome.contextMenus?.onClicked?.addListener(async (info) => {
+  try {
+    const settings = await getSettings();
+    if (info.menuItemId === "aheadguard_check_selection" && info.selectionText) {
+      const target = `${settings.backendUrl}?text=${encodeURIComponent(info.selectionText)}`;
+      await chrome.tabs.create({ url: target });
+    } else if (info.menuItemId === "aheadguard_check_link" && info.linkUrl) {
+      const target = `${settings.backendUrl}?url=${encodeURIComponent(info.linkUrl)}`;
+      await chrome.tabs.create({ url: target });
+    }
+  } catch {
+  }
+});
 export {
   isValidBackendEndpoint
 };

@@ -8,6 +8,8 @@ import { analyzeMessageText } from "@/lib/message-intelligence";
 import { verifyCompanyIdentity, verifyJobListing } from "@/lib/company-verification";
 import { enrichReportWithScamIntelligence, createTextOnlyReport } from "@/lib/claims-evaluator";
 import { saveInvestigation, getRecentInvestigations, getInvestigationById, testDatabaseConnection } from "@/lib/db";
+import { extractEntitiesFromContent } from "@/lib/trustgraph/entity-extractor";
+import { TrustGraphStore } from "@/lib/trustgraph/graph-store";
 import type { ProgressEvent, InvestigationReport } from "@/lib/types";
 import {
   isAllowedOrigin,
@@ -387,13 +389,32 @@ export async function POST(request: Request) {
         extractedUrls: messageData.extractedUrls.map(sanitizeUrlForSharing),
       };
 
-      return enrichReportWithScamIntelligence({
+      const enriched = enrichReportWithScamIntelligence({
         report: baseReport,
         messageData: safeMessageData,
         companyIdentity,
         jobVerification,
         analysisMode: analysisMode || (isExplicitLinkMode ? "link" : "message"),
       });
+
+      // Cross-platform TrustGraph ingestion
+      try {
+        const entities = extractEntitiesFromContent({
+          text: [messageData?.redactedText, baseReport.originalUrl].filter(Boolean).join("\n"),
+          url: baseReport.originalUrl,
+          claimedOrg: claimedOrganization,
+        });
+        TrustGraphStore.getInstance().ingestInvestigationEntities({
+          investigationId: baseReport.investigationId,
+          platform: isExplicitLinkMode ? "browser_extension" : "universal_share",
+          entities,
+          riskOutcome: enriched.riskOutcome,
+        });
+      } catch {
+        // Non-blocking graph ingestion
+      }
+
+      return enriched;
     };
 
     // 7. Handle Real-Time SSE Streaming to Client

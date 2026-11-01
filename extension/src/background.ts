@@ -349,3 +349,37 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
   return true; // Keep message channel open for async response
 });
+
+// Context Menus for Universal In-Page Investigation
+chrome.runtime.onInstalled.addListener(() => {
+  try {
+    chrome.contextMenus.create({
+      id: "aheadguard_check_selection",
+      title: "AheadGuard: Investigate Selected Text",
+      contexts: ["selection"],
+    });
+    chrome.contextMenus.create({
+      id: "aheadguard_check_link",
+      title: "AheadGuard: Investigate Link Destination",
+      contexts: ["link"],
+    });
+  } catch {
+    // Ignore in tests or if contextMenus is not supported in runner
+  }
+});
+
+chrome.contextMenus?.onClicked?.addListener(async (info) => {
+  try {
+    const settings = await getSettings();
+    if (info.menuItemId === "aheadguard_check_selection" && info.selectionText) {
+      const target = `${settings.backendUrl}?text=${encodeURIComponent(info.selectionText)}`;
+      await chrome.tabs.create({ url: target });
+    } else if (info.menuItemId === "aheadguard_check_link" && info.linkUrl) {
+      const target = `${settings.backendUrl}?url=${encodeURIComponent(info.linkUrl)}`;
+      await chrome.tabs.create({ url: target });
+    }
+  } catch {
+    // Silent fallback
+  }
+});
+
