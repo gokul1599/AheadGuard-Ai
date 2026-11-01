@@ -6,6 +6,7 @@ import { PlatformType, InputCategory } from "../integrations/types";
 import { TrustGraphNode, TrustGraphEdge, CrossChannelCampaignSignal } from "../trustgraph/graph-store";
 import { TransactionVerificationReport } from "../transaction-truth/screenshot-forensics";
 import { QrInspectionReport } from "../transaction-truth/qr-inspector";
+import { OfferIntegrityReport } from "../offer-integrity/types";
 
 export interface NormalizedInvestigationRequest {
   investigationId: string;
@@ -42,6 +43,7 @@ export interface StandardizedInvestigationResult {
     edges: TrustGraphEdge[];
     campaignSignal: CrossChannelCampaignSignal;
   };
+  offerIntegrity?: OfferIntegrityReport;
   transactionTruth?: TransactionVerificationReport;
   qrInspection?: QrInspectionReport;
   safeActionPlan: {

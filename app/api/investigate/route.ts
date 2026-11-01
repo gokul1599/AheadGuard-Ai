@@ -10,6 +10,7 @@ import { enrichReportWithScamIntelligence, createTextOnlyReport } from "@/lib/cl
 import { saveInvestigation, getRecentInvestigations, getInvestigationById, testDatabaseConnection } from "@/lib/db";
 import { extractEntitiesFromContent } from "@/lib/trustgraph/entity-extractor";
 import { TrustGraphStore } from "@/lib/trustgraph/graph-store";
+import { evaluateOfferIntegrity } from "@/lib/offer-integrity/offer-evaluator";
 import type { ProgressEvent, InvestigationReport } from "@/lib/types";
 import {
   isAllowedOrigin,
@@ -315,6 +316,19 @@ export async function POST(request: Request) {
         companyIdentity,
         jobVerification,
       });
+
+      if (analysisMode === "job" || claimedJobRole || /intern(?:ship)?|job\s+offer|shortlisted/i.test(rawMessage)) {
+        try {
+          const offerReport = await evaluateOfferIntegrity({
+            offerMessage: rawMessage,
+            claimedCompany: claimedOrganization || messageData.claimedOrganization,
+            claimedRole: claimedJobRole || messageData.claimedJobRole,
+          });
+          textReport.offerIntegrity = offerReport;
+        } catch {
+          // non-fatal
+        }
+      }
 
       // Persist to Neon (non-blocking failure, strictly bounded to max 5s)
       try {

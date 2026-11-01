@@ -359,6 +359,11 @@ chrome.runtime.onInstalled.addListener(() => {
       contexts: ["selection"],
     });
     chrome.contextMenus.create({
+      id: "aheadguard_check_offer",
+      title: "AheadGuard: Verify Job / Internship Offer (Before You Pay)",
+      contexts: ["selection"],
+    });
+    chrome.contextMenus.create({
       id: "aheadguard_check_link",
       title: "AheadGuard: Investigate Link Destination",
       contexts: ["link"],
@@ -371,7 +376,10 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.contextMenus?.onClicked?.addListener(async (info) => {
   try {
     const settings = await getSettings();
-    if (info.menuItemId === "aheadguard_check_selection" && info.selectionText) {
+    if (info.menuItemId === "aheadguard_check_offer" && info.selectionText) {
+      const target = `${settings.backendUrl}?offer=${encodeURIComponent(info.selectionText)}`;
+      await chrome.tabs.create({ url: target });
+    } else if (info.menuItemId === "aheadguard_check_selection" && info.selectionText) {
       const target = `${settings.backendUrl}?text=${encodeURIComponent(info.selectionText)}`;
       await chrome.tabs.create({ url: target });
     } else if (info.menuItemId === "aheadguard_check_link" && info.linkUrl) {

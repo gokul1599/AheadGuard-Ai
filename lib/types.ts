@@ -249,6 +249,7 @@ export interface InvestigationReport {
   eventsCount: number;
   // Extended scam & trust intelligence
   scamIntelligence?: ScamIntelligence;
+  offerIntegrity?: import("./offer-integrity/types").OfferIntegrityReport;
   extractedUrls?: string[];
   selectedTargetUrl?: string;
   analysisMode?: "link" | "message" | "job" | "report";
@@ -277,6 +278,10 @@ export const InputSchema = z.object({
   targetUrl: z.string().trim().max(2048).optional(),
   claimedOrganization: z.string().trim().max(200).optional(),
   claimedJobRole: z.string().trim().max(200).optional(),
+  recruiterName: z.string().trim().max(200).optional(),
+  senderEmail: z.string().trim().max(320).optional(),
+  paymentAmount: z.string().trim().max(50).optional(),
+  paymentReason: z.string().trim().max(500).optional(),
   officialCareersUrl: z.string().trim().max(2048).optional(),
   analysisMode: z.enum(["link", "message", "job", "report"]).optional(),
 });

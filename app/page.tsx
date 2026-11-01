@@ -12,8 +12,9 @@ import { IntegrationsHub } from "@/components/IntegrationsHub";
 import { TrustGraphExplorer } from "@/components/TrustGraphExplorer";
 import { TransactionTruthCard } from "@/components/TransactionTruthCard";
 import { SafeActionPlannerCard } from "@/components/SafeActionPlannerCard";
+import { OfferIntegrityCard } from "@/components/OfferIntegrityCard";
 
-type AnalysisMode = "link" | "message" | "job" | "report" | "integrations" | "graph" | "truth";
+type AnalysisMode = "link" | "message" | "job" | "offer_integrity" | "report" | "integrations" | "graph" | "truth";
 
 const LINK_EXAMPLES = [
   { label: "Scaler Official", value: "https://www.scaler.com" },
@@ -647,6 +648,16 @@ export default function Home() {
               <span>Verify Job Offer</span>
             </button>
             <button
+              className={`mode-tab-btn ${mode === "offer_integrity" ? "active" : ""}`}
+              onClick={() => setMode("offer_integrity")}
+              disabled={loading}
+              type="button"
+              style={mode === "offer_integrity" ? { border: "1px solid #06b6d4", color: "#06b6d4" } : {}}
+            >
+              <Icon name="shield-check" />
+              <span>Offer Integrity (Check Before You Pay)</span>
+            </button>
+            <button
               className={`mode-tab-btn ${mode === "report" ? "active" : ""}`}
               onClick={() => setMode("report")}
               disabled={loading}
@@ -994,6 +1005,12 @@ export default function Home() {
                   disabled={loading}
                 />
               </div>
+            </div>
+          )}
+
+          {mode === "offer_integrity" && (
+            <div className="mode-form-container" style={{ marginTop: "16px" }}>
+              <OfferIntegrityCard />
             </div>
           )}
 

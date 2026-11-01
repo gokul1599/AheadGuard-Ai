@@ -10,6 +10,8 @@ import { validateAndNormalizeUrl } from "../url-safety";
 import { assessInvestigation } from "../policy";
 import { executeTinyFishInvestigation } from "../tinyfish";
 import { InvestigationReport } from "../types";
+import { evaluateOfferIntegrity } from "../offer-integrity/offer-evaluator";
+import { OfferIntegrityReport } from "../offer-integrity/types";
 
 export class InvestigationOrchestrator {
   private static instance?: InvestigationOrchestrator;
@@ -63,6 +65,27 @@ export class InvestigationOrchestrator {
     if (request.qrPayload || request.inputCategory === "qr_code") {
       notify("Inspecting QR code payload...");
       qrInspection = inspectQrPayload(request.qrPayload || request.rawInput);
+    }
+
+    // 3b. Offer Integrity Intelligence (internship/job offers & fee verifications)
+    let offerIntegrity: OfferIntegrityReport | undefined;
+    const isJobOrInternshipOffer =
+      request.inputCategory === "job_offer" ||
+      Boolean(request.claimedJobRole) ||
+      /intern(?:ship)?|job\s+offer|shortlisted|interview\s+slot/i.test(combinedText);
+
+    if (isJobOrInternshipOffer) {
+      notify("Evaluating Offer Integrity (vacancy, recruitment policy, recruiter affiliation)...");
+      offerIntegrity = await evaluateOfferIntegrity({
+        offerMessage: combinedText,
+        claimedCompany: request.claimedOrganization,
+        claimedRole: request.claimedJobRole,
+        recruiterName: request.recruiterContact,
+        vacancyUrl: request.targetUrl,
+      }, {
+        investigationId: request.investigationId,
+        onProgress: (msg) => notify(msg),
+      });
     }
 
     // 4. Resolve Target URL
@@ -182,6 +205,16 @@ export class InvestigationOrchestrator {
       report.outcomeReason = "High risk: Scanning and entering PIN on this QR will transfer money out of your account.";
     }
 
+    if (offerIntegrity?.offerBreakdown.payment.paymentRequested && offerIntegrity.offerBreakdown.payment.conflictsWithPolicy) {
+      report.riskOutcome = "High risk";
+      report.threatLikelihood = "High";
+      report.consequenceImpact = "Severe";
+      report.warningSigns.push(
+        `Offer Integrity Alert: Demands payment of ${offerIntegrity.offerBreakdown.payment.currency || "INR"} ${offerIntegrity.offerBreakdown.payment.amount} which conflicts with official corporate recruitment policy.`
+      );
+      report.outcomeReason = offerIntegrity.coreDistinctionNotice;
+    }
+
     // 8. Ingest into TrustGraph & Detect Cross-Channel Campaigns
     notify("Connecting observables into TrustGraph...");
     const { nodes, edges, campaignSignal } = this.graphStore.ingestInvestigationEntities({
@@ -220,6 +253,7 @@ export class InvestigationOrchestrator {
         edges,
         campaignSignal,
       },
+      offerIntegrity,
       transactionTruth,
       qrInspection,
       safeActionPlan,
