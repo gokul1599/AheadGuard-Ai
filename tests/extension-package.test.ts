@@ -10,6 +10,19 @@ describe("AheadGuard AI Chrome Extension Distribution Package", () => {
   const releaseJsonPath = path.join(publicDir, "extension-release.json");
   const extensionDir = path.join(rootDir, "extension");
 
+function listZipEntries(zipFilePath: string): string {
+  try {
+    return execSync(`unzip -l "${zipFilePath}"`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {}
+  try {
+    return execSync(`tar -tf "${zipFilePath}"`, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  } catch {}
+  return execSync(
+    `powershell -NoProfile -Command "[System.IO.Compression.ZipFile]::OpenRead('${zipFilePath}').Entries.FullName"`,
+    { encoding: "utf8" }
+  );
+}
+
   beforeAll(() => {
     // Ensure extension is built and packaged
     execSync("node scripts/package-extension.mjs", { cwd: rootDir, stdio: "pipe" });
@@ -22,7 +35,7 @@ describe("AheadGuard AI Chrome Extension Distribution Package", () => {
   });
 
   it("contains all 9 required runtime distribution files in the ZIP", () => {
-    const listOutput = execSync(`unzip -l "${zipPath}"`, { encoding: "utf8" });
+    const listOutput = listZipEntries(zipPath);
 
     const requiredFiles = [
       "manifest.json",
@@ -42,7 +55,7 @@ describe("AheadGuard AI Chrome Extension Distribution Package", () => {
   });
 
   it("does not include development artifacts, TypeScript files, or node_modules in the ZIP", () => {
-    const listOutput = execSync(`unzip -l "${zipPath}"`, { encoding: "utf8" });
+    const listOutput = listZipEntries(zipPath);
 
     expect(listOutput).not.toContain("node_modules");
     expect(listOutput).not.toContain(".ts");

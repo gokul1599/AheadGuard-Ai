@@ -83,12 +83,56 @@ const targetPaths = [
   resolve(rootDir, versionedZipName),
 ];
 
+function createZipArchive(targetPath, fileList, cwd) {
+  let created = false;
+  let lastErr = null;
+
+  // Attempt 1: Standard zip command (Linux / macOS / environments with zip installed)
+  try {
+    execSync(`zip -r "${targetPath}" ${fileList.join(" ")}`, {
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    created = existsSync(targetPath) && statSync(targetPath).size > 0;
+  } catch (err) {
+    lastErr = err;
+  }
+
+  // Attempt 2: tar -a -cf (Native on Windows 10/11, macOS, and Linux bsdtar)
+  if (!created) {
+    try {
+      execSync(`tar -a -cf "${targetPath}" ${fileList.join(" ")}`, {
+        cwd,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      created = existsSync(targetPath) && statSync(targetPath).size > 0;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  // Attempt 3: PowerShell Compress-Archive (Windows fallback)
+  if (!created && process.platform === "win32") {
+    try {
+      const psItems = fileList.map((f) => `'${f}'`).join(",");
+      const psCmd = `powershell -NoProfile -Command "Compress-Archive -Path ${psItems} -DestinationPath '${targetPath}' -Force"`;
+      execSync(psCmd, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      created = existsSync(targetPath) && statSync(targetPath).size > 0;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+
+  if (!created) {
+    throw new Error(`Failed to create ZIP package ${targetPath}: ${lastErr?.message || "No zip utility available"}`);
+  }
+}
+
 for (const targetPath of targetPaths) {
   if (existsSync(targetPath)) {
     rmSync(targetPath);
   }
-  const zipCmd = `zip -r "${targetPath}" ${filesToZip.join(" ")}`;
-  execSync(zipCmd, { cwd: extensionDir, stdio: ["ignore", "pipe", "inherit"] });
+  createZipArchive(targetPath, filesToZip, extensionDir);
   console.log(`  ✓ Built package: ${targetPath}`);
 }
 

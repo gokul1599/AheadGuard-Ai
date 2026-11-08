@@ -422,12 +422,24 @@ async function main() {
         const targets = await listRes.json();
         lastTargets = targets;
         console.log(`  [Attempt ${attempt + 1}] Targets:`, targets.map((t) => ({ type: t.type, title: t.title, url: t.url })));
-        swTarget = targets.find(
-          (t) =>
-            t.type === "service_worker" &&
-            t.url?.includes("background.js") &&
-            !t.url?.includes("glbjnfimcajjenihimblfaponejbkoph")
-        );
+        const BROWSER_INTERNAL_EXTENSION_IDS = new Set([
+          "glbjnfimcajjenihimblfaponejbkoph",
+          "admccjkmockfdflocgggjfgdacdodkdf",
+          "jdiccldimpdaibmpdkjnbmckianbfold",
+          "ncbjelpjchkpbikbpkcchkhkblodoama",
+          "fikbjbembnmfhppjfnmfkahdhfohhjmg",
+          "ihmafllikibpmigkcoadcmckbfhibefp",
+          "nkeimhogjdpnpccoofpliimaahmaaome",
+          "ndcpkimcihhghdcddljkfmmjccdmcmof",
+        ]);
+
+        swTarget = targets.find((t) => {
+          if (t.type !== "service_worker" || !t.url?.includes("background.js")) {
+            return false;
+          }
+          const id = t.url?.split("/")?.[2];
+          return id && !BROWSER_INTERNAL_EXTENSION_IDS.has(id);
+        });
         if (swTarget) break;
       } catch {}
       await sleep(500);
