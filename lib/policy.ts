@@ -52,6 +52,11 @@ const SUSPICIOUS_SIGNALS = [
   "executable download",
   "unverified apk",
   "powershell script",
+  "unauthorized streaming",
+  "piracy media portal",
+  "popunder overlay",
+  "sideloaded apk",
+  "unauthorized ott",
 ];
 
 // Adversarial prompt injection markers in web content
@@ -184,6 +189,33 @@ export const BRAND_DOMAIN_REGISTRY: Record<string, BrandRegistryEntry> = {
     approvedDomains: ["netflix.com", "netflix.net"],
     affiliatedAuthDomains: [],
     officialCareersUrl: "https://jobs.netflix.com/",
+  },
+  disney: {
+    canonicalName: "Disney+",
+    aliases: ["disney+", "disney plus", "the walt disney company", "disney"],
+    approvedDomains: ["disneyplus.com", "disney.com", "hotstar.com"],
+    affiliatedAuthDomains: [],
+    officialCareersUrl: "https://jobs.disneycareers.com/",
+  },
+  hulu: {
+    canonicalName: "Hulu",
+    aliases: ["hulu", "hulu llc"],
+    approvedDomains: ["hulu.com"],
+    affiliatedAuthDomains: [],
+    officialCareersUrl: "https://www.hulu.com/jobs",
+  },
+  max: {
+    canonicalName: "Max (HBO)",
+    aliases: ["max", "hbo max", "warner bros discovery"],
+    approvedDomains: ["max.com", "hbomax.com"],
+    affiliatedAuthDomains: [],
+  },
+  spotify: {
+    canonicalName: "Spotify",
+    aliases: ["spotify", "spotify ab"],
+    approvedDomains: ["spotify.com"],
+    affiliatedAuthDomains: [],
+    officialCareersUrl: "https://www.lifeatspotify.com/",
   },
   wikimedia: {
     canonicalName: "Wikimedia Foundation",
@@ -556,6 +588,136 @@ export function isUserHostedPlatform(hostname: string): boolean {
     h === "now.sh" ||
     h.endsWith(".now.sh")
   );
+}
+
+/**
+ * Detects unauthorized media streaming portals, piracy mirrors, unlicensed OTT aggregators,
+ * popunder malvertising overlays, and unverified sideloaded streaming APK distributors.
+ */
+export function detectUnauthorizedStreamingOrPiracyPortal(params: {
+  hostname: string;
+  pageTitle?: string;
+  visiblePurpose?: string;
+  overallObservation?: string;
+  claimedOrg?: string;
+  rawText?: string;
+  observedWarningSigns?: string[];
+}): {
+  isPiracyOrUnauthorizedStreaming: boolean;
+  hasAdwareOverlay: boolean;
+  hasSideloadedApk: boolean;
+  warningSigns: string[];
+  evidenceDetails: {
+    piracyDetail?: string;
+    adwareDetail?: string;
+    apkDetail?: string;
+  };
+} {
+  const h = (params.hostname || "").toLowerCase().trim().replace(/^\[|\]$/g, "");
+  const warningSigns: string[] = [];
+  const evidenceDetails: {
+    piracyDetail?: string;
+    adwareDetail?: string;
+    apkDetail?: string;
+  } = {};
+
+  // Never flag reserved example domains or approved official brand registry domains
+  if (isReservedExampleDomain(h)) {
+    return {
+      isPiracyOrUnauthorizedStreaming: false,
+      hasAdwareOverlay: false,
+      hasSideloadedApk: false,
+      warningSigns: [],
+      evidenceDetails: {},
+    };
+  }
+
+  for (const entry of Object.values(BRAND_DOMAIN_REGISTRY)) {
+    if (entry.approvedDomains.some((d) => isDomainOrSubdomain(h, d) || isSameRegistrableDomain(h, d))) {
+      return {
+        isPiracyOrUnauthorizedStreaming: false,
+        hasAdwareOverlay: false,
+        hasSideloadedApk: false,
+        warningSigns: [],
+        evidenceDetails: {},
+      };
+    }
+  }
+
+  const combinedText = [
+    h,
+    params.pageTitle || "",
+    params.visiblePurpose || "",
+    params.overallObservation || "",
+    params.claimedOrg || "",
+    params.rawText || "",
+    ...(params.observedWarningSigns || []),
+  ].join(" \n ");
+
+  // 1. Domain-level piracy / streaming mirror patterns
+  const KNOWN_PIRACY_DOMAIN_PATTERNS = [
+    /(?:^|\.)(?:netmirror|123movies|fmovies|soap2day|flixhq|solarmovie|cineb|lookmovie|hdtoday|bflix|myflixer|gomovies|putlocker|yts|1337x|tamilrockers|filmyzilla|movierulz|piratebay|rarbg|streamlord|vumoo|attacker|hurawatch|fbox|flixtor|primewire)(?:\.[a-z]{2,})+$/i,
+    /(?:^|\.)[a-z0-9-]*(?:netmirror|stream(?:ing)?mirror|moviemirror|freemovies?|watchmovies?online|watchseries?online|pirate[a-z0-9-]*stream|torrentstream)[a-z0-9-]*\.[a-z]{2,}$/i,
+  ];
+
+  const hasPiracyDomain = KNOWN_PIRACY_DOMAIN_PATTERNS.some((pat) => pat.test(h));
+
+  // 2. Content-level unauthorized OTT streaming / piracy indicators
+  const STREAMING_PIRACY_CONTENT_PATTERNS = [
+    /(?:explore|browse|watch|stream)\s+(?:movies?\s*(?:&|and)\s*tv\s*(?:series|shows?)|content)\s+(?:from\s+multiple\s+(?:countries\s+and\s+)?ott\s+platforms|online\s+free)/i,
+    /\bott\s+platforms?\b.*\b(?:watch|stream|movies?|series|free)\b/i,
+    /(?:watch|stream)\s+(?:movies?\s*(?:&|and)\s*tv\s*(?:series|shows?)|free\s+movies?)\s+online/i,
+    /\b(?:free\s+hd\s+movies?|free\s+movie\s+streaming|watch\s+full\s+(?:movies?|episodes?)\s+free|stream\s+full\s+hd\s+movies?)\b/i,
+    /\b(?:unauthorized\s+streaming|pirated\s+(?:movies?|stream|content)|piracy\s+(?:mirror|site|portal)|streaming\s+mirror)\b/i,
+    /\bnetmirror\b/i,
+  ];
+
+  const hasPiracyContent = STREAMING_PIRACY_CONTENT_PATTERNS.some((pat) => pat.test(combinedText));
+
+  const isPiracyOrUnauthorizedStreaming = hasPiracyDomain || hasPiracyContent;
+
+  if (isPiracyOrUnauthorizedStreaming) {
+    const piracyLabel = "Unauthorized Streaming / Piracy Media Portal";
+    warningSigns.push(piracyLabel);
+    evidenceDetails.piracyDetail =
+      `The destination (${h}) operates as an unauthorized media streaming portal or mirror aggregating copyrighted movies and TV series from OTT subscription platforms. These destinations operate outside legitimate licensing frameworks and carry high risks of malvertising, unauthorized tracking, and deceptive redirects.`;
+  }
+
+  // 3. Adware / Popunder overlay scripts
+  const ADWARE_POPUNDER_PATTERNS = [
+    /\b(?:disable-popunder-overlay|popunder|pop-under|llvpn(?:\.com)?|adsterra|popcash|popads|clickunder|exoclick|propellerads)\b/i,
+    /\bz-index\s*:\s*2147483647\b/i,
+  ];
+
+  const hasAdwareOverlay = ADWARE_POPUNDER_PATTERNS.some((pat) => pat.test(combinedText));
+  if (hasAdwareOverlay) {
+    const adwareLabel = "Adware / Popunder Overlay Injection Observed";
+    warningSigns.push(adwareLabel);
+    evidenceDetails.adwareDetail =
+      "The page embeds popunder advertising network scripts (e.g. llvpn/ad-tag) or maximum z-index click-capture overlays designed to trigger intrusive popup advertisements or forced redirects.";
+  }
+
+  // 4. Unverified sideloaded APK / application distribution
+  const SIDELOADED_APK_PATTERNS = [
+    /(?:download\s+(?:the\s+)?(?:free\s+)?(?:netmirror\s+|streaming\s+)?apk|sideload\s+apk|watch\s+and\s+browse\s+content\s+on\s+android,\s*ios,\s*and\s+for\s+pc|download\s+for\s+(?:android|pc|ios)\s+(?:apk|\.exe))/i,
+    /\b(?:download\s+apk|direct\s+apk\s+download|apk\s+download\s+link)\b/i,
+  ];
+
+  const hasSideloadedApk = (isPiracyOrUnauthorizedStreaming || hasPiracyDomain) && SIDELOADED_APK_PATTERNS.some((pat) => pat.test(combinedText));
+  if (hasSideloadedApk) {
+    const apkLabel = "Unverified Sideloaded APK Distribution";
+    warningSigns.push(apkLabel);
+    evidenceDetails.apkDetail =
+      "The destination promotes downloading sideloaded Android application packages (APKs) outside verified app stores (such as Google Play or Apple App Store). Sideloaded streaming apps carry high risks of trojans, spyware, and device compromise.";
+  }
+
+  return {
+    isPiracyOrUnauthorizedStreaming,
+    hasAdwareOverlay,
+    hasSideloadedApk,
+    warningSigns,
+    evidenceDetails,
+  };
 }
 
 /**
@@ -1404,6 +1566,9 @@ export interface ActionPreviewOptions {
   isExplicitLoginDestination?: boolean;
   isHostedPayment?: boolean;
   isUserHostedPlatform?: boolean;
+  isUnauthorizedStreaming?: boolean;
+  hasAdwareOverlay?: boolean;
+  hasSideloadedApk?: boolean;
 }
 
 /**
@@ -1425,6 +1590,9 @@ export function generateActionPreview(
   const isExplicitLogin = options?.isExplicitLoginDestination ?? false;
   const isHostedPayment = options?.isHostedPayment ?? false;
   const isUserHostedPlatform = options?.isUserHostedPlatform ?? false;
+  const isStreaming = options?.isUnauthorizedStreaming ?? false;
+  const hasAdware = options?.hasAdwareOverlay ?? false;
+  const hasApk = options?.hasSideloadedApk ?? false;
 
   // 1. Risk Factors Grounding
   if (facts.isHttp) {
@@ -1438,6 +1606,15 @@ export function generateActionPreview(
   }
   if (facts.downloadOrPermissionRequest) {
     riskFactors.push("Destination actively prompts for file downloads or elevated browser permissions.");
+  }
+  if (isStreaming) {
+    riskFactors.push("Destination operates as an unauthorized media streaming portal or mirror aggregating copyrighted content.");
+  }
+  if (hasAdware) {
+    riskFactors.push("Page injects aggressive popunder ad-network scripts or transparent click-capture overlays.");
+  }
+  if (hasApk) {
+    riskFactors.push("Page encourages downloading unverified sideloaded APKs or software outside official app stores.");
   }
 
   if (facts.hasPasswordField || facts.credentialOrPaymentRequest) {
@@ -1459,6 +1636,8 @@ export function generateActionPreview(
 
   if (isHostedPayment && (facts.hasPaymentField || facts.credentialOrPaymentRequest)) {
     proposedAction = `Submitting payment or transfer details on ${destinationHost || "paypal.me"}.`;
+  } else if (isStreaming) {
+    proposedAction = `Accessing an unauthorized media streaming portal (${destinationHost || "the page"}).`;
   } else if (isExplicitLogin && (facts.credentialOrPaymentRequest || facts.hasPasswordField)) {
     proposedAction = `Submitting credentials on ${destinationHost || "the page"}.`;
   } else if (facts.hasPaymentField) {
@@ -1481,6 +1660,12 @@ export function generateActionPreview(
         ? `This destination appears to be an unauthorized site masquerading as ${claimedOrg}. Proceeding exposes you to deceptive content.`
         : "This destination exhibits indicators of deception or impersonation. Do not proceed or disclose personal information.";
     }
+  } else if (isStreaming) {
+    consequenceIfProceed = hasApk
+      ? "Sideloading unverified streaming applications outside official app stores carries high risks of spyware, device compromise, and unwanted malware."
+      : hasAdware
+      ? "Interacting with unauthorized streaming sites frequently triggers intrusive pop-under redirects and malvertising. Do not click ad overlays or submit personal details."
+      : "Unauthorized streaming portals expose users to aggressive malvertising, tracking, and copyright risks. Do not download sideloaded software or disclose personal information.";
   } else if (isHostedPayment) {
     // Hosted payment link (e.g. PayPal.Me)
     if (facts.hasPaymentField || facts.credentialOrPaymentRequest) {
@@ -1764,6 +1949,74 @@ export function assessInvestigation(params: {
     };
     evidenceItems.push(item);
     warningSigns.push(item.label);
+  }
+
+  // Unauthorized streaming, piracy mirrors, malvertising popunders, and sideloaded APK detection
+  const streamingPiracyCheck = detectUnauthorizedStreamingOrPiracyPortal({
+    hostname: submittedHost,
+    pageTitle: observedFacts.pageTitle,
+    visiblePurpose: observedFacts.visiblePurpose,
+    overallObservation: structured?.overall_observation,
+    claimedOrg: structured?.claimed_organization,
+    rawText,
+    observedWarningSigns: structured?.observed_warning_signs,
+  });
+
+  if (streamingPiracyCheck.isPiracyOrUnauthorizedStreaming) {
+    const piracyFinding: Finding = {
+      label: "Unauthorized Streaming / Piracy Media Portal",
+      detail:
+        streamingPiracyCheck.evidenceDetails.piracyDetail ||
+        `The destination (${submittedHost}) operates as an unauthorized media streaming portal or mirror aggregating copyrighted movies and TV series from OTT subscription platforms. These destinations operate outside legitimate licensing frameworks and carry high risks of malvertising, unauthorized tracking, and deceptive redirects.`,
+      kind: "warning",
+      provenance: "policy_rule",
+      evidenceNature: "direct_observation",
+      sourceType: "observed_destination",
+      sourceUrl: finalUrlStr || submittedUrl.toString(),
+      accessible: true,
+    };
+    evidenceItems.push(piracyFinding);
+    if (!warningSigns.includes(piracyFinding.label)) {
+      warningSigns.push(piracyFinding.label);
+    }
+  }
+
+  if (streamingPiracyCheck.hasAdwareOverlay) {
+    const adwareFinding: Finding = {
+      label: "Adware / Popunder Overlay Injection Observed",
+      detail:
+        streamingPiracyCheck.evidenceDetails.adwareDetail ||
+        "The page embeds popunder advertising network scripts or maximum z-index click-capture overlays designed to trigger intrusive popup advertisements or forced redirects.",
+      kind: "warning",
+      provenance: "browser_observation",
+      evidenceNature: "direct_observation",
+      sourceType: "observed_destination",
+      sourceUrl: finalUrlStr || submittedUrl.toString(),
+      accessible: true,
+    };
+    evidenceItems.push(adwareFinding);
+    if (!warningSigns.includes(adwareFinding.label)) {
+      warningSigns.push(adwareFinding.label);
+    }
+  }
+
+  if (streamingPiracyCheck.hasSideloadedApk) {
+    const apkFinding: Finding = {
+      label: "Unverified Sideloaded APK Distribution",
+      detail:
+        streamingPiracyCheck.evidenceDetails.apkDetail ||
+        "The destination promotes downloading sideloaded Android application packages (APKs) outside verified app stores (such as Google Play or Apple App Store). Sideloaded streaming apps carry high risks of trojans, spyware, and device compromise.",
+      kind: "warning",
+      provenance: "browser_observation",
+      evidenceNature: "direct_observation",
+      sourceType: "observed_destination",
+      sourceUrl: finalUrlStr || submittedUrl.toString(),
+      accessible: true,
+    };
+    evidenceItems.push(apkFinding);
+    if (!warningSigns.includes(apkFinding.label)) {
+      warningSigns.push(apkFinding.label);
+    }
   }
 
   // Reserved Example Domain Handling (RFC 2606) & Platform Service Classification
@@ -2111,7 +2364,7 @@ export function assessInvestigation(params: {
   // Impact evaluation
   if (observedFacts.credentialOrPaymentRequest || observedFacts.hasPasswordField || observedFacts.hasPaymentField) {
     consequenceImpact = "High";
-  } else if (observedFacts.downloadOrPermissionRequest) {
+  } else if (observedFacts.downloadOrPermissionRequest || streamingPiracyCheck.hasSideloadedApk || streamingPiracyCheck.hasAdwareOverlay) {
     consequenceImpact = "High";
   } else {
     consequenceImpact = "Moderate";
@@ -2229,7 +2482,9 @@ export function assessInvestigation(params: {
     riskOutcome = "Suspicious";
     threatLikelihood = "Moderate";
     outcomeReason = `Observed ${warningSigns.length} meaningful warning sign(s) requiring caution: ${warningSigns.slice(0, 3).join("; ")}.`;
-    recommendedAction = "Pause and verify. Do not enter credentials or complete financial transactions without independent confirmation.";
+    recommendedAction = streamingPiracyCheck.isPiracyOrUnauthorizedStreaming
+      ? "Pause and verify. Do not download sideloaded APKs or software from unauthorized streaming portals. Avoid interacting with media player overlays or submitting personal information."
+      : "Pause and verify. Do not enter credentials or complete financial transactions without independent confirmation.";
   }
   // Policy Rule 4: Low Observed Risk
   // Strictly requires passed checks, positive signals, 0 warning signs, clean transport/redirection,
@@ -2240,6 +2495,7 @@ export function assessInvestigation(params: {
   // For ordinary informational content (including benign user-hosted content without credential/payment prompts),
   // positive signals and the absence of deceptive indicators justify Low observed risk.
   else if (
+    !streamingPiracyCheck.isPiracyOrUnauthorizedStreaming &&
     (agentPositives.length >= 1 || brandAffiliation.isOfficialDomain) &&
     warningSigns.length === 0 &&
     !isHttp &&
@@ -2324,6 +2580,9 @@ export function assessInvestigation(params: {
       isExplicitLoginDestination,
       isHostedPayment,
       isUserHostedPlatform: isUserHosted,
+      isUnauthorizedStreaming: streamingPiracyCheck.isPiracyOrUnauthorizedStreaming,
+      hasAdwareOverlay: streamingPiracyCheck.hasAdwareOverlay,
+      hasSideloadedApk: streamingPiracyCheck.hasSideloadedApk,
     }
   );
 

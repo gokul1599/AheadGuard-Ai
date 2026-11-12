@@ -2,11 +2,11 @@
   "name": "AheadGuard AI — Proactive Digital Safety Guardian",
   "version": "3.0.0",
   "manifestVersion": 3,
-  "releaseDate": "2026-11-08",
+  "releaseDate": "2026-11-12",
   "fileName": "aheadguard-ai-chrome-extension.zip",
   "downloadUrl": "/aheadguard-ai-chrome-extension.zip",
   "versionedDownloadUrl": "/aheadguard-extension-v3.0.0.zip",
-  "sha256": "320f2ea1f182c8e16f64c9a2523fef3456a30238ee202fa238105c34f0cbbf46",
+  "sha256": "b9a3870d205fb372c0a6794572dcf628e04df0253df1efecf5a32021aba8f9fa",
   "sizeBytes": 27692,
   "sizeFormatted": "27.0 KB",
   "files": [

@@ -2345,5 +2345,148 @@ describe("Benchmark Overhaul: False-Positive Elimination, Phishing Detection & P
     expect(report.evidenceItems.some((f) => f.label === "Official Brand Anti-Bot Security Perimeter")).toBe(true);
     expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
   });
+
+  it("NetMirror (https://netmirror.plus/) resolves to Suspicious with unauthorized streaming, adware popunder, and APK warnings", () => {
+    const url = new URL("https://netmirror.plus/");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 6,
+      rawAgentText:
+        'Observed NetMirror portal. <script src="https://llvpn.com/tag.min.js"></script> <style>html.disable-popunder-overlay div[style*="z-index: 2147483647"]</style>',
+      structuredResult: {
+        page_title: "NetMirror – Watch Movies & TV Series Online",
+        observed_final_url: "https://netmirror.plus/",
+        claimed_organization: "NetMirror",
+        visible_purpose:
+          "NetMirror lets you explore movies and TV series from multiple countries and OTT platforms. Watch and browse content on Android, iOS, and for pc.",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "HTTPS enabled on the domain (netmirror.plus)",
+          "Responsive HTML5 media navigation UI",
+        ],
+        checks_performed: ["Inspected metadata", "Inspected scripts and styles"],
+        unknowns: [],
+        overall_observation:
+          "NetMirror streaming site offering movies and TV shows from paid OTT platforms without licensing.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Suspicious");
+    expect(report.threatLikelihood).toBe("Moderate");
+    expect(report.consequenceImpact).toBe("High"); // Due to adware popunder / sideloaded APK
+    expect(report.warningSigns.some((w) => w.includes("Unauthorized Streaming"))).toBe(true);
+    expect(report.warningSigns.some((w) => w.includes("Adware / Popunder Overlay"))).toBe(true);
+    expect(report.warningSigns.some((w) => w.includes("Unverified Sideloaded APK Distribution"))).toBe(true);
+    expect(report.recommendedAction).toContain("Do not download sideloaded APKs or software from unauthorized streaming portals");
+    expect(report.actionPreview.proposedAction).toContain("netmirror.plus");
+    expect(report.actionPreview.consequenceIfProceed).toContain("Sideloading unverified streaming applications");
+  });
+
+  it("Generic piracy streaming portal (e.g. 123movies mirror) resolves to Suspicious instead of false Low observed risk", () => {
+    const url = new URL("https://123movies-free.org/watch-movies-online");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "Landing page for free movie streaming.",
+      structuredResult: {
+        page_title: "Watch Free Movies & TV Series Online Full HD",
+        observed_final_url: "https://123movies-free.org/watch-movies-online",
+        claimed_organization: "123Movies",
+        visible_purpose: "Free HD movie streaming and watch full episodes online free",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: ["HTTPS active"],
+        checks_performed: ["Inspected landing page"],
+        unknowns: [],
+        overall_observation: "Free movie streaming portal indexing copyrighted media.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Suspicious");
+    expect(report.warningSigns.some((w) => w.includes("Unauthorized Streaming"))).toBe(true);
+  });
+
+  it("Authentic Netflix portal continues to resolve cleanly to Low observed risk", () => {
+    const url = new URL("https://www.netflix.com/browse");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "Official Netflix browse page.",
+      structuredResult: {
+        page_title: "Netflix - Watch TV Shows Online, Watch Movies Online",
+        observed_final_url: "https://www.netflix.com/browse",
+        claimed_organization: "Netflix",
+        visible_purpose: "Official subscription video on demand platform",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "Domain is netflix.com, matching official Netflix domain",
+          "HTTPS is active for the connection",
+        ],
+        checks_performed: ["Inspected domain certificate", "Verified brand registry"],
+        unknowns: [],
+        overall_observation: "Official Netflix media streaming service.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
+  });
+
+  it("Authentic Disney+ portal continues to resolve cleanly to Low observed risk", () => {
+    const url = new URL("https://www.disneyplus.com");
+    const tinyFishResult: TinyFishExecutionResult = {
+      success: true,
+      goalFailed: false,
+      eventsCount: 5,
+      rawAgentText: "Official Disney+ portal.",
+      structuredResult: {
+        page_title: "Stream Disney, Pixar, Marvel, Star Wars, Nat Geo | Disney+",
+        observed_final_url: "https://www.disneyplus.com/",
+        claimed_organization: "Disney+",
+        visible_purpose: "Official streaming service for Disney, Pixar, Marvel, Star Wars",
+        credential_or_payment_request: false,
+        login_form_observed: false,
+        password_field_observed: false,
+        payment_field_observed: false,
+        download_or_permission_request: false,
+        observed_warning_signs: [],
+        positive_signals: [
+          "Domain is disneyplus.com, matching official Disney+ domain",
+          "HTTPS is active for the connection",
+        ],
+        checks_performed: ["Inspected domain certificate", "Verified brand registry"],
+        unknowns: [],
+        overall_observation: "Official Disney+ streaming service.",
+      },
+    };
+
+    const report = assessInvestigation({ submittedUrl: url, tinyFishResult });
+    expect(report.riskOutcome).toBe("Low observed risk");
+    expect(report.threatLikelihood).toBe("Low");
+    expect(report.warningSigns).toHaveLength(0);
+    expect(report.evidenceItems.some((f) => f.label === "Matches Configured Brand Registry")).toBe(true);
+  });
 });
 
